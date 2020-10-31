@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -101,8 +101,22 @@ public:
 
   // Allocates and returns a new entry.  Returns NULL if memory allocation
   // failed.  Locks _allocation_mutex.
-  // postcondition: *result == NULL.
+  // postcondition: result == NULL or *result == NULL.
   oop* allocate();
+
+  // Maximum number of entries that can be allocated by one call to
+  // allocate(oop**, size_t).
+  static const size_t bulk_allocate_limit = BitsPerWord;
+
+  // Allocates multiple entries, returning them in the ptrs buffer.  The
+  // number of entries that will be allocated is the minimum of size and
+  // bulk_allocate_limit.  Possibly faster than making repeated calls to
+  // allocate().  Returns the number of entries allocated.  A result of zero
+  // indicates failure to allocate any entries.
+  // Locks _allocation_mutex.
+  // precondition: size > 0.
+  // postcondition: *ptrs[i] == NULL for i in [0, result).
+  size_t allocate(oop** ptrs, size_t size);
 
   // Deallocates ptr.  No locking.
   // precondition: ptr is a valid allocated entry.
@@ -258,6 +272,7 @@ private:
 
   bool try_add_block();
   Block* block_for_allocation();
+  void  log_block_transition(Block* block, const char* new_state) const;
 
   Block* find_block_or_null(const oop* ptr) const;
   void delete_empty_block(const Block& block);

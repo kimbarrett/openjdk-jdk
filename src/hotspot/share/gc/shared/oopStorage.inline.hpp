@@ -138,13 +138,15 @@ class OopStorage::Block /* No base class, to avoid messing up alignment. */ {
   size_t _active_index;
   AllocationListEntry _allocation_list_entry;
   Block* volatile _deferred_updates_next;
-  volatile uintx _release_refcount;
+  volatile uint _release_refcount;
+  bool _bulk_allocating;
 
   Block(const OopStorage* owner, void* memory);
   ~Block();
 
   void check_index(unsigned index) const;
   unsigned get_index(const oop* ptr) const;
+  void atomic_add_allocated(uintx add);
 
   template<typename F, typename BlockPtr>
   static bool iterate_impl(F f, BlockPtr b);
@@ -168,6 +170,9 @@ public:
   bool is_empty() const;
   uintx allocated_bitmask() const;
 
+  bool is_bulk_allocating() const;
+  void set_bulk_allocating(bool value);
+
   bool is_safe_to_delete() const;
 
   Block* deferred_updates_next() const;
@@ -183,6 +188,7 @@ public:
   static Block* block_for_ptr(const OopStorage* owner, const oop* ptr);
 
   oop* allocate();
+  size_t bulk_allocate(oop** ptr, size_t size);
   static Block* new_block(const OopStorage* owner);
   static void delete_block(const Block& block);
 
