@@ -25,229 +25,115 @@
 #ifndef SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPTABLE_HPP
 #define SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPTABLE_HPP
 
-#include "gc/shared/stringdedup/stringDedupStat.hpp"
-#include "runtime/mutexLocker.hpp"
+#include "memory/allocation.hpp"
+#include "gc/shared/stringdedup/stringDedup.hpp"
+#include "oops/typeArrayOop.hpp"
+#include "utilities/globalDefinitions.hpp"
+#include "utilities/macros.hpp"
 
-class StringDedupEntryCache;
-class StringDedupUnlinkOrOopsDoClosure;
+class OopStorage;
 
+// Provides deduplication.  There is only one instance of this class.  This
+// object keeps track of all the unique character arrays used by
+// deduplicated String objects.
 //
-// Table entry in the deduplication hashtable. Points weakly to the
-// character array. Can be chained in a linked list in case of hash
-// collisions or when placed in a freelist in the entry cache.
+// The character arrays are in a hashtable, hashed using the characters in
+// the array.  The references to the arrays by the hashtable are weak,
+// allowing arrays that become unreachable to be collected and their entries
+// pruned from the table.  The hashtable is dynamically resized to
+// accommodate the current number of hashtable entries.  There are several
+// command line options controlling the growth or shrinkage of the
+// hashtable.
 //
-class StringDedupEntry : public CHeapObj<mtGC> {
+// The Table and its underlying hashtable are only accessed by the dedup
+// thread.  The only place where thread safety is an issue is with the GC
+// callback that reports the number of dead entries in the associated
+// OopStorage.
+class StringDedup::Table : public CHeapObj<mtGC> {
 private:
-  StringDedupEntry* _next;
-  unsigned int      _hash;
-  bool              _latin1;
-  typeArrayOop      _obj;
+  class Entry;
+  class HTable;
+
+  // Weak storage for the string data in the table.
+  static OopStorage* _table_storage;
+
+  // The hashtable containing the string data.
+  HTable* _ht;
+
+  Table();
+  ~Table();
+
+  NONCOPYABLE(Table);
+
+  static void num_dead_callback(size_t num_dead);
 
 public:
-  StringDedupEntry() :
-    _next(NULL),
-    _hash(0),
-    _latin1(false),
-    _obj(NULL) {
-  }
+  static void initialize_storage();
+  static void initialize();
+  static void destroy();
 
-  StringDedupEntry* next() {
-    return _next;
-  }
+  // Attempt to add an entry for a shared string.  Returns true if
+  // successfully added.  string_ref is an oopstorage entry from this
+  // table's storage object.  It refers to a shared string.  The storage
+  // entry is used by the table entry if successfully added.  If add fails,
+  // the caller is responsible for releasing the storage entry.  Not
+  // thread-safe.  All calls to this function must preceed any calls to
+  // deduplicate().
+  bool add_shared_string(oop* string_ref, Stat* stat);
 
-  StringDedupEntry** next_addr() {
-    return &_next;
-  }
+  // Deduplicate java_string.  If the table already contains the string's
+  // data array, replace the string's data array with the one in the table.
+  // Otherwise, add the string's data array to the table.  Not thread-safe.
+  // Calls to this function must follow the last call to add_shared_string().
+  void deduplicate(oop java_string, Stat* stat);
 
-  void set_next(StringDedupEntry* next) {
-    _next = next;
-  }
+  // The weak oopstorage used to record string data in the table.
+  OopStorage* storage() const;
 
-  unsigned int hash() {
-    return _hash;
-  }
+  // Rebuilding (resizing) the table.
+  // First call rebuild_start.  If a state is returned, repeatedly call
+  // rebuild_step until it returns false; this allows the caller to do
+  // things like checking for safepoints frequently.  Call rebuild_end once
+  // rebuild_step returns false to tidy up.  Also call rebuild_end if the
+  // iteration is to be abandoned; this may discard some table entries, but
+  // is only expected to be needed when shutting down.  Rebuild also
+  // implicitly cleans the table.
+  class RebuildState;
 
-  void set_hash(unsigned int hash) {
-    _hash = hash;
-  }
+  // If rebuild is needed, returns a new rebuild state.  Otherwise
+  // returns a nullptr.  The caller owns the state and must eventually
+  // call rebuild_end to delete it.
+  RebuildState* rebuild_start(Stat* stat);
 
-  bool latin1() {
-    return _latin1;
-  }
+  // Perform some rebuild work.  Returns true if any progress was
+  // made, false if there is no further work associated with state.
+  bool rebuild_step(RebuildState* state);
 
-  void set_latin1(bool latin1) {
-    _latin1 = latin1;
-  }
+  // Record the rebuild associated with state complete and delete state.
+  void rebuild_end(RebuildState* state);
 
-  typeArrayOop obj() {
-    return _obj;
-  }
+  // Cleaning the table, i.e. removing cleared entries.
+  // First call cleanup_start.  If a state is returned, repeatedly call
+  // cleanup_step until it returns false; this allows the caller to do
+  // things like checking for safepoints frequently.  Call cleanup_end once
+  // cleanup_step returns false to tidy up.  Also call cleanup_end if the
+  // iteration is to be abandoned.
+  class CleanupState;
 
-  typeArrayOop* obj_addr() {
-    return &_obj;
-  }
+  // If cleanup is needed, returns a new cleanup state.  Otherwise
+  // returns nullptr.  The caller owns the state and must eventually
+  // call cleanup_end to delete it.
+  CleanupState* cleanup_start(Stat* stat);
 
-  void set_obj(typeArrayOop obj) {
-    _obj = obj;
-  }
-};
+  // Perform some cleanup work.  Returns true if any progress was
+  // made, false if there is no further work associated with state.
+  bool cleanup_step(CleanupState* state);
 
-//
-// The deduplication hashtable keeps track of all unique character arrays used
-// by String objects. Each table entry weakly points to an character array, allowing
-// otherwise unreachable character arrays to be declared dead and pruned from the
-// table.
-//
-// The table is dynamically resized to accommodate the current number of table entries.
-// The table has hash buckets with chains for hash collision. If the average chain
-// length goes above or below given thresholds the table grows or shrinks accordingly.
-//
-// The table is also dynamically rehashed (using a new hash seed) if it becomes severely
-// unbalanced, i.e., a hash chain is significantly longer than average.
-//
-// All access to the table is protected by the StringDedupTable_lock, except under
-// safepoints in which case GC workers are allowed to access a table partitions they
-// have claimed without first acquiring the lock. Note however, that this applies only
-// the table partition (i.e. a range of elements in _buckets), not other parts of the
-// table such as the _entries field, statistics counters, etc.
-//
-class StringDedupTable : public CHeapObj<mtGC> {
-private:
-  // The currently active hashtable instance. Only modified when
-  // the table is resizes or rehashed.
-  static StringDedupTable*        _table;
+  // Record the cleanup associated with state complete and delete state.
+  void cleanup_end(CleanupState* state);
 
-  // Cache for reuse and fast alloc/free of table entries.
-  static StringDedupEntryCache*   _entry_cache;
-
-  StringDedupEntry**              _buckets;
-  size_t                          _size;
-  volatile uintx                  _entries;
-  uintx                           _shrink_threshold;
-  uintx                           _grow_threshold;
-  bool                            _rehash_needed;
-
-  // The hash seed also dictates which hash function to use. A
-  // zero hash seed means we will use the Java compatible hash
-  // function (which doesn't use a seed), and a non-zero hash
-  // seed means we use the murmur3 hash function.
-  uint64_t                        _hash_seed;
-
-  // Constants governing table resize/rehash/cache.
-  static const size_t             _min_size;
-  static const size_t             _max_size;
-  static const double             _grow_load_factor;
-  static const double             _shrink_load_factor;
-  static const uintx              _rehash_multiple;
-  static const uintx              _rehash_threshold;
-  static const double             _max_cache_factor;
-
-  // Table statistics, only used for logging.
-  static uintx                    _entries_added;
-  static volatile uintx           _entries_removed;
-  static uintx                    _resize_count;
-  static uintx                    _rehash_count;
-
-  static volatile size_t          _claimed_index;
-
-  static StringDedupTable*        _resized_table;
-  static StringDedupTable*        _rehashed_table;
-
-  StringDedupTable(size_t size, uint64_t hash_seed = 0);
-  ~StringDedupTable();
-
-  // Returns the hash bucket at the given index.
-  StringDedupEntry** bucket(size_t index) {
-    return _buckets + index;
-  }
-
-  // Returns the hash bucket index for the given hash code.
-  size_t hash_to_index(unsigned int hash) {
-    return (size_t)hash & (_size - 1);
-  }
-
-  // Adds a new table entry to the given hash bucket.
-  void add(typeArrayOop value, bool latin1, unsigned int hash, StringDedupEntry** list);
-
-  // Removes the given table entry from the table.
-  void remove(StringDedupEntry** pentry, uint worker_id);
-
-  // Transfers a table entry from the current table to the destination table.
-  void transfer(StringDedupEntry** pentry, StringDedupTable* dest);
-
-  // Returns an existing character array in the given hash bucket, or NULL
-  // if no matching character array exists.
-  typeArrayOop lookup(typeArrayOop value, bool latin1, unsigned int hash,
-                      StringDedupEntry** list, uintx &count);
-
-  // Returns an existing character array in the table, or inserts a new
-  // table entry if no matching character array exists.
-  typeArrayOop lookup_or_add_inner(typeArrayOop value, bool latin1, unsigned int hash);
-
-  // Thread safe lookup or add of table entry
-  static typeArrayOop lookup_or_add(typeArrayOop value, bool latin1, unsigned int hash) {
-    // Protect the table from concurrent access. Also note that this lock
-    // acts as a fence for _table, which could have been replaced by a new
-    // instance if the table was resized or rehashed.
-    MutexLocker ml(StringDedupTable_lock, Mutex::_no_safepoint_check_flag);
-    return _table->lookup_or_add_inner(value, latin1, hash);
-  }
-
-  // Returns true if the hashtable is currently using a Java compatible
-  // hash function.
-  static bool use_java_hash() {
-    return _table->_hash_seed == 0;
-  }
-
-  // Computes the hash code for the given character array, using the
-  // currently active hash function and hash seed.
-  static unsigned int hash_code(typeArrayOop value, bool latin1);
-
-  static uintx unlink_or_oops_do(StringDedupUnlinkOrOopsDoClosure* cl,
-                                 size_t partition_begin,
-                                 size_t partition_end,
-                                 uint worker_id);
-
-  static size_t claim_table_partition(size_t partition_size);
-
-  static bool is_resizing();
-  static bool is_rehashing();
-
-  // If a table resize is needed, returns a newly allocated empty
-  // hashtable of the proper size.
-  static StringDedupTable* prepare_resize();
-
-  // Installs a newly resized table as the currently active table
-  // and deletes the previously active table.
-  static void finish_resize(StringDedupTable* resized_table);
-
-  // If a table rehash is needed, returns a newly allocated empty
-  // hashtable and updates the hash seed.
-  static StringDedupTable* prepare_rehash();
-
-  // Transfers rehashed entries from the currently active table into
-  // the new table. Installs the new table as the currently active table
-  // and deletes the previously active table.
-  static void finish_rehash(StringDedupTable* rehashed_table);
-
-public:
-  static void create();
-
-  // Deduplicates the given String object, or adds its backing
-  // character array to the deduplication hashtable.
-  static void deduplicate(oop java_string, StringDedupStat* stat);
-
-  static void unlink_or_oops_do(StringDedupUnlinkOrOopsDoClosure* cl, uint worker_id);
-
-  static void print_statistics();
-  static void verify();
-
-  // If the table entry cache has grown too large, delete overflowed entries.
-  static void clean_entry_cache();
-
-  // GC support
-  static void gc_prologue(bool resize_and_rehash_table);
-  static void gc_epilogue();
+  void verify() const;
+  void log_statistics() const;
 };
 
 #endif // SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPTABLE_HPP

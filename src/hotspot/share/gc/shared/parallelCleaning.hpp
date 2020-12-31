@@ -28,18 +28,7 @@
 #include "classfile/classLoaderDataGraph.hpp"
 #include "code/codeCache.hpp"
 #include "gc/shared/oopStorageParState.hpp"
-#include "gc/shared/stringdedup/stringDedup.hpp"
 #include "gc/shared/workgroup.hpp"
-
-class StringDedupCleaningTask : public AbstractGangTask {
-  StringDedupUnlinkOrOopsDoClosure _dedup_closure;
-
-public:
-  StringDedupCleaningTask(BoolObjectClosure* is_alive, OopClosure* keep_alive, bool resize_table);
-  ~StringDedupCleaningTask();
-
-  void work(uint worker_id);
-};
 
 class CodeCacheUnloadingTask {
 

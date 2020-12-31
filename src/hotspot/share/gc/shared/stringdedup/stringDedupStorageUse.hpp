@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,25 +19,33 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
+ *
  */
 
-package gc.g1;
+#ifndef SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPSTORAGEUSE_HPP
+#define SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPSTORAGEUSE_HPP
 
-/*
- * @test TestStringDeduplicationTableRehash
- * @summary Test string deduplication table rehash
- * @bug 8029075
- * @requires vm.gc.G1
- * @library /test/lib
- * @library /
- * @modules java.base/jdk.internal.misc:open
- * @modules java.base/java.lang:open
- *          java.management
- * @run driver gc.g1.TestStringDeduplicationTableRehash
- */
+#include "gc/shared/stringdedup/stringDedup.hpp"
+#include "memory/allocation.hpp"
+#include "utilities/globalDefinitions.hpp"
+#include "utilities/macros.hpp"
 
-public class TestStringDeduplicationTableRehash {
-    public static void main(String[] args) throws Exception {
-        TestStringDeduplicationTools.testTableRehash();
-    }
-}
+class OopStorage;
+
+class StringDedup::StorageUse : public CHeapObj<mtGC> {
+  OopStorage* const _storage;
+  volatile size_t _use_count;
+
+  NONCOPYABLE(StorageUse);
+
+public:
+  explicit StorageUse(OopStorage* storage);
+
+  OopStorage* storage() const { return _storage; }
+  bool is_used_acquire() const;
+
+  static StorageUse* obtain(StorageUse* volatile* ptr);
+  void relinquish();
+};
+
+#endif // SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPSTORAGEUSE_HPP

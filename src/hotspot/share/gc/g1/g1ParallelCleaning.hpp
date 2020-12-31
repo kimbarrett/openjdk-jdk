@@ -46,7 +46,6 @@ private:
 class G1ParallelCleaningTask : public AbstractGangTask {
 private:
   bool                    _unloading_occurred;
-  StringDedupCleaningTask _string_dedup_task;
   CodeCacheUnloadingTask  _code_cache_task;
 #if INCLUDE_JVMCI
   JVMCICleaningTask       _jvmci_cleaning_task;
@@ -57,8 +56,7 @@ public:
   // The constructor is run in the VMThread.
   G1ParallelCleaningTask(BoolObjectClosure* is_alive,
                          uint num_workers,
-                         bool unloading_occurred,
-                         bool resize_dedup_table);
+                         bool unloading_occurred);
 
   void work(uint worker_id);
 };

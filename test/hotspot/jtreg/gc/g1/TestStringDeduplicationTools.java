@@ -102,6 +102,27 @@ class TestStringDeduplicationTools {
         }
     }
 
+    private static boolean waitForDeduplication(String s1, String s2) {
+        boolean first = true;
+        int timeout = 10000;     // 10sec in ms
+        int iterationWait = 100; // 100ms
+        for (int attempts = 0; attempts < (timeout / iterationWait); attempts++) {
+            if (getValue(s1) == getValue(s2)) {
+                return true;
+            }
+            if (first) {
+                System.out.println("Waiting for deduplication...");
+                first = false;
+            }
+            try {
+                Thread.sleep(iterationWait);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return false;
+    }
+
     private static String generateString(int id) {
         StringBuilder builder = new StringBuilder(StringLength);
 
@@ -262,19 +283,7 @@ class TestStringDeduplicationTools {
             // and be inserted into the deduplication hashtable.
             forceDeduplication(ageThreshold, FullGC);
 
-            // Wait for deduplication to occur
-            for (int attempts = 0; attempts < 10; attempts++) {
-                if (getValue(dupString1) == getValue(baseString)) {
-                    break;
-                }
-                System.out.println("Waiting...");
-                try {
-                    Thread.sleep(1000);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-            if (getValue(dupString1) != getValue(baseString)) {
+            if (!waitForDeduplication(dupString1, baseString)) {
                 throw new RuntimeException("Deduplication has not occurred");
             }
 
@@ -288,10 +297,16 @@ class TestStringDeduplicationTools {
             // Intern the new duplicate
             Object beforeInternedValue = getValue(dupString2);
             String internedString = dupString2.intern();
+
+            // Force internedString to be inspected for deduplication.
+            // Because it was interned it should be queued up for
+            // dedup, even though it hasn't reached the age threshold.
+            doYoungGc(1);
+
             if (internedString != dupString2) {
                 throw new RuntimeException("String should match");
             }
-            if (getValue(internedString) != getValue(baseString)) {
+            if (!waitForDeduplication(internedString, baseString)) {
                 throw new RuntimeException("Values should match");
             }
 
@@ -306,7 +321,7 @@ class TestStringDeduplicationTools {
         }
 
         public static OutputAnalyzer run() throws Exception {
-            return runTest("-Xlog:gc=debug,gc+stringdedup=trace",
+            return runTest("-Xlog:gc=debug,gc+stringdedup*=debug",
                            "-XX:+UseStringDeduplication",
                            "-XX:StringDeduplicationAgeThreshold=" + DefaultAgeThreshold,
                            InternedTest.class.getName(),
@@ -333,7 +348,7 @@ class TestStringDeduplicationTools {
         OutputAnalyzer output = DeduplicationTest.run(LargeNumberOfStrings,
                                                       DefaultAgeThreshold,
                                                       YoungGC,
-                                                      "-Xlog:gc,gc+stringdedup=trace");
+                                                      "-Xlog:gc,gc+stringdedup*=debug");
         output.shouldNotContain("Full GC");
         output.shouldContain("Pause Young (Normal) (G1 Evacuation Pause)");
         output.shouldContain("Concurrent String Deduplication");
@@ -346,7 +361,7 @@ class TestStringDeduplicationTools {
         OutputAnalyzer output = DeduplicationTest.run(LargeNumberOfStrings,
                                                       DefaultAgeThreshold,
                                                       FullGC,
-                                                      "-Xlog:gc,gc+stringdedup=trace");
+                                                      "-Xlog:gc,gc+stringdedup*=debug");
         output.shouldNotContain("Pause Young (Normal) (G1 Evacuation Pause)");
         output.shouldContain("Full GC");
         output.shouldContain("Concurrent String Deduplication");
@@ -359,25 +374,11 @@ class TestStringDeduplicationTools {
         OutputAnalyzer output = DeduplicationTest.run(LargeNumberOfStrings,
                                                       DefaultAgeThreshold,
                                                       YoungGC,
-                                                      "-Xlog:gc,gc+stringdedup=trace",
+                                                      "-Xlog:gc,gc+stringdedup*=debug",
                                                       "-XX:+StringDeduplicationResizeALot");
         output.shouldContain("Concurrent String Deduplication");
         output.shouldContain("Deduplicated:");
         output.shouldNotContain("Resize Count: 0");
-        output.shouldHaveExitValue(0);
-    }
-
-    public static void testTableRehash() throws Exception {
-        // Test with StringDeduplicationRehashALot
-        OutputAnalyzer output = DeduplicationTest.run(LargeNumberOfStrings,
-                                                      DefaultAgeThreshold,
-                                                      YoungGC,
-                                                      "-Xlog:gc,gc+stringdedup=trace",
-                                                      "-XX:+StringDeduplicationRehashALot");
-        output.shouldContain("Concurrent String Deduplication");
-        output.shouldContain("Deduplicated:");
-        output.shouldNotContain("Rehash Count: 0");
-        output.shouldNotContain("Hash Seed: 0x0");
         output.shouldHaveExitValue(0);
     }
 
@@ -388,7 +389,7 @@ class TestStringDeduplicationTools {
         output = DeduplicationTest.run(SmallNumberOfStrings,
                                        MaxAgeThreshold,
                                        YoungGC,
-                                       "-Xlog:gc,gc+stringdedup=trace");
+                                       "-Xlog:gc,gc+stringdedup*=debug");
         output.shouldContain("Concurrent String Deduplication");
         output.shouldContain("Deduplicated:");
         output.shouldHaveExitValue(0);
@@ -397,7 +398,7 @@ class TestStringDeduplicationTools {
         output = DeduplicationTest.run(SmallNumberOfStrings,
                                        MinAgeThreshold,
                                        YoungGC,
-                                       "-Xlog:gc,gc+stringdedup=trace");
+                                       "-Xlog:gc,gc+stringdedup*=debug");
         output.shouldContain("Concurrent String Deduplication");
         output.shouldContain("Deduplicated:");
         output.shouldHaveExitValue(0);

@@ -21,61 +21,180 @@
  * questions.
  *
  */
+
 #include "precompiled.hpp"
-
+#include "classfile/vmClasses.hpp"
+#include "gc/shared/oopStorage.hpp"
+#include "gc/shared/oopStorageSet.hpp"
+#include "gc/shared/gcLogPrecious.hpp"
 #include "gc/shared/stringdedup/stringDedup.hpp"
-#include "gc/shared/stringdedup/stringDedupQueue.hpp"
+#include "gc/shared/stringdedup/stringDedupConfig.hpp"
+#include "gc/shared/stringdedup/stringDedupProcessor.hpp"
+#include "gc/shared/stringdedup/stringDedupStorageUse.hpp"
 #include "gc/shared/stringdedup/stringDedupTable.hpp"
-#include "gc/shared/stringdedup/stringDedupThread.hpp"
+#include "logging/log.hpp"
+#include "memory/allocation.hpp"
 #include "memory/iterator.hpp"
+#include "oops/access.inline.hpp"
+#include "oops/instanceKlass.hpp"
+#include "oops/markWord.hpp"
+#include "oops/oopsHierarchy.hpp"
+#include "runtime/globals.hpp"
+#include "runtime/mutexLocker.hpp"
+#include "runtime/safepoint.hpp"
+#include "runtime/thread.hpp"
+#include "utilities/debug.hpp"
+#include "utilities/globalDefinitions.hpp"
 
+bool StringDedup::_initialized = false;
 bool StringDedup::_enabled = false;
 
-void StringDedup::gc_prologue(bool resize_and_rehash_table) {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupQueue::gc_prologue();
-  StringDedupTable::gc_prologue(resize_and_rehash_table);
+StringDedup::Config* StringDedup::_config = nullptr;
+StringDedup::Table* StringDedup::_table = nullptr;
+StringDedup::Processor* StringDedup::_processor = nullptr;
 
+const Klass* StringDedup::_string_klass_or_null = nullptr;
+uint StringDedup::_enabled_age_threshold = 0;
+uint StringDedup::_enabled_age_limit = 0;
+
+bool StringDedup::ergo_initialize() {
+  return Config::ergo_initialize();
 }
-void StringDedup::gc_epilogue() {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupQueue::gc_epilogue();
-  StringDedupTable::gc_epilogue();
+
+void StringDedup::initialize() {
+  assert(!_initialized, "already initialized");
+  // Unconditionally create the oopstorage objects, to simplify usage
+  // elsewhere. OopStorageSet and clients don't support optional oopstorage
+  // objects.
+  Table::initialize_storage();
+  Processor::initialize_storage();
+  if (UseStringDeduplication) {
+    Config::initialize();
+    Table::initialize();
+    Processor::initialize();
+    // Verify klass comparison with _string_klass_or_null is sufficient
+    // to determine whether dedup is enabled and the object is a String.
+    assert(vmClasses::String_klass()->is_final(), "precondition");
+    _string_klass_or_null = vmClasses::String_klass();
+    _enabled_age_threshold = _config->age_threshold();
+    _enabled_age_limit = _config->age_threshold();
+    _enabled = true;
+    log_info_p(gc, init)("String Deduplication is enabled");
+  } else {
+    // No klass will ever match.
+    _string_klass_or_null = nullptr;
+    // Age can never equal UINT_MAX.
+    static_assert(markWord::max_age < UINT_MAX, "assumption");
+    _enabled_age_threshold = UINT_MAX;
+    // Age can never be less than zero.
+    _enabled_age_limit = 0;
+  }
+  _initialized = true;
+}
+
+void StringDedup::destroy() {
+  if (is_enabled()) {
+    _enabled = false;
+    _processor->stop();
+    Processor::destroy();
+    Table::destroy();
+    Config::destroy();
+  }
 }
 
 void StringDedup::stop() {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupThread::thread()->stop();
-}
-
-void StringDedup::deduplicate(oop java_string) {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupStat dummy; // Statistics from this path is never used
-  StringDedupTable::deduplicate(java_string, &dummy);
-}
-
-void StringDedup::parallel_unlink(StringDedupUnlinkOrOopsDoClosure* unlink, uint worker_id) {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupQueue::unlink_or_oops_do(unlink);
-  StringDedupTable::unlink_or_oops_do(unlink, worker_id);
+  if (_processor != nullptr) {
+    _processor->stop();
+  }
 }
 
 void StringDedup::threads_do(ThreadClosure* tc) {
-  assert(is_enabled(), "String deduplication not enabled");
-  tc->do_thread(StringDedupThread::thread());
+  if (_processor != nullptr) {
+    tc->do_thread(_processor);
+  }
+}
+
+void StringDedup::deduplicate(oop java_string) {
+  if (!is_enabled()) return;
+  StorageUse* storage_for_requests = Processor::storage_for_requests();
+  oop* ref = storage_for_requests->storage()->allocate();
+  if (ref != nullptr) {
+    NativeAccess<ON_PHANTOM_OOP_REF>::oop_store(ref, java_string);
+    log_trace(gc, stringdedup)("deduplicate request");
+  } else {
+    log_debug(gc, stringdedup)("deduplicate request allocation failed");
+  }
+  storage_for_requests->relinquish();
+  // Just accumulate requests here, don't notify processor to run.
+  // The next GC will trigger request processing.
+}
+
+StringDedup::Requests::Requests() :
+  _storage_for_requests(nullptr), _buffer(nullptr), _index(0), _active(true)
+{}
+
+StringDedup::Requests::~Requests() {
+  flush();
+}
+
+void StringDedup::Requests::add(oop java_string) {
+  assert(is_enabled(), "StringDedup not enabled");
+  const size_t buffer_size = OopStorage::bulk_allocate_limit;
+  if (_index == 0) {
+    if (!_active) return;
+    // Lazy initialization of the requests object.  It can be common for
+    // many of the marking threads to not encounter any candidates.
+    if (_buffer == nullptr) {
+      // Lazily allocate a buffer to hold pre-allocated storage entries.
+      _buffer = NEW_C_HEAP_ARRAY_RETURN_NULL(oop*, buffer_size, mtGC);
+      if (_buffer == nullptr) {
+        log_debug(gc, stringdedup)("request failed to allocate buffer");
+        _active = false;
+        return;
+      }
+      // Lazily obtain the storage object to use for requests.
+      assert(_storage_for_requests == nullptr, "invariant");
+      _storage_for_requests = Processor::storage_for_requests();
+    }
+    assert(_storage_for_requests != nullptr, "invariant");
+    // Bulk pre-allocate some storage entries to satisfy this and future
+    // requests.  This amortizes the cost of allocating entries over
+    // multiple requests, and reduces contention on the storage object.
+    _index = _storage_for_requests->storage()->allocate(_buffer, buffer_size);
+    if (_index == 0) {
+      log_debug(gc, stringdedup)("request failed to allocate oopstorage entries");
+      flush();
+      _active = false;
+      return;
+    }
+  }
+  // Store the string in the next pre-allocated storage entry.
+  oop* ref = _buffer[--_index];
+  _buffer[_index] = nullptr;
+  NativeAccess<ON_PHANTOM_OOP_REF>::oop_store(ref, java_string);
+  log_trace(gc, stringdedup)("request");
+}
+
+void StringDedup::Requests::flush() {
+  if (_buffer != nullptr) {
+    if (_index > 0) {
+      assert(_storage_for_requests != nullptr, "invariant");
+      _storage_for_requests->storage()->release(_buffer, _index);
+    }
+    FREE_C_HEAP_ARRAY(oop*, _buffer);
+    _buffer = nullptr;
+  }
+  if (_storage_for_requests != nullptr) {
+    _storage_for_requests->relinquish();
+    _storage_for_requests = nullptr;
+  }
+  _index = 0;
+  _active = true;
 }
 
 void StringDedup::verify() {
-  assert(is_enabled(), "String deduplication not enabled");
-  StringDedupQueue::verify();
-  StringDedupTable::verify();
-}
-
-
-StringDedupUnlinkOrOopsDoClosure::StringDedupUnlinkOrOopsDoClosure(BoolObjectClosure* is_alive,
-                                                                   OopClosure* keep_alive) :
-  _always_true(),
-  _do_nothing(),
-  _is_alive(is_alive != NULL ? is_alive : &_always_true),
-  _keep_alive(keep_alive != NULL ? keep_alive : &_do_nothing) {
+  assert_at_safepoint();
+  if (is_enabled()) {
+    _table->verify();
+  }
 }

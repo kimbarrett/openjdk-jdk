@@ -1975,17 +1975,40 @@ const intx ObjectAlignmentInBytes = 8;
   product(bool, UseStringDeduplication, false,                              \
           "Use string deduplication")                                       \
                                                                             \
-  product(uintx, StringDeduplicationAgeThreshold, 3,                        \
+  product(uint, StringDeduplicationAgeThreshold, 3,                         \
           "A string must reach this age (or be promoted to an old region) " \
           "to be considered for deduplication")                             \
           range(1, markWord::max_age)                                       \
                                                                             \
+  product(int, StringDeduplicationInitialTableSize, 1000, EXPERIMENTAL,     \
+          "Approximate initial number of buckets in the table")             \
+	  range(1, 1 * G)                                                   \
+	                                                                    \
+  product(double, StringDeduplicationGrowTableLoad, 10.0, EXPERIMENTAL,     \
+          "Entries per bucket above which the table should be expanded")    \
+          range(0.1, 1.0e9)                                                 \
+	                                                                    \
+  product(double, StringDeduplicationShrinkTableLoad, 1.0, EXPERIMENTAL,    \
+          "Entries per bucket below which the table should be shrunk")      \
+          range(0.001, 100.0)                                               \
+	                                                                    \
+  product(double, StringDeduplicationTargetTableLoad, 7.0, EXPERIMENTAL,    \
+          "Desired entries per bucket when resizing the table")             \
+          range(0.001, 1 * G)                                               \
+	                                                                    \
+  product(size_t, StringDeduplicationCleanupDeadMinimum, 100, EXPERIMENTAL, \
+          "Minimum number of dead table entries for cleaning the table")    \
+	                                                                    \
+  product(int, StringDeduplicationCleanupDeadPercent, 5, EXPERIMENTAL,      \
+          "Minimum percentage of dead table entries for cleaning the table") \
+          range(1, 100)                                                     \
+	                                                                    \
   product(bool, StringDeduplicationResizeALot, false, DIAGNOSTIC,           \
-          "Force table resize every time the table is scanned")             \
+          "Force more frequent table resizing")                             \
                                                                             \
-  product(bool, StringDeduplicationRehashALot, false, DIAGNOSTIC,           \
-          "Force table rehash every time the table is scanned")             \
-                                                                            \
+  product(uint64_t, StringDeduplicationHashSeed, 0, DIAGNOSTIC,             \
+          "Seed for the table hashing function; 0 requests computed seed")  \
+	                                                                    \
   product(bool, WhiteBoxAPI, false, DIAGNOSTIC,                             \
           "Enable internal testing APIs")                                   \
                                                                             \

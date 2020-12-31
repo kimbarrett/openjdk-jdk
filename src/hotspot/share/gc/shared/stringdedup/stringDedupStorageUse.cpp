@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,33 +22,31 @@
  *
  */
 
-#ifndef SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPQUEUE_INLINE_HPP
-#define SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPQUEUE_INLINE_HPP
+#include "precompiled.hpp"
+#include "gc/shared/stringdedup/stringDedupStorageUse.hpp"
+#include "runtime/atomic.hpp"
+#include "runtime/thread.hpp"
+#include "utilities/debug.hpp"
+#include "utilities/globalCounter.inline.hpp"
+#include "utilities/globalDefinitions.hpp"
 
-#include "gc/shared/stringdedup/stringDedup.hpp"
-#include "gc/shared/stringdedup/stringDedupQueue.hpp"
+StringDedup::StorageUse::StorageUse(OopStorage* storage) :
+  _storage(storage), _use_count(0)
+{}
 
-template <typename Q>
-void StringDedupQueue::create() {
-  assert(StringDedup::is_enabled(), "Must be enabled");
-  assert(_queue == NULL, "Can have only one queue");
-  _queue = new Q;
+bool StringDedup::StorageUse::is_used_acquire() const {
+  return Atomic::load_acquire(&_use_count) > 0;
 }
 
-void StringDedupQueue::wait() {
-  queue()->wait_impl();
+StringDedup::StorageUse*
+StringDedup::StorageUse::obtain(StorageUse* volatile* ptr) {
+  GlobalCounter::CriticalSection cs(Thread::current());
+  StorageUse* storage = Atomic::load(ptr);
+  Atomic::inc(&storage->_use_count);
+  return storage;
 }
 
-void StringDedupQueue::cancel_wait() {
-  queue()->cancel_wait_impl();
+void StringDedup::StorageUse::relinquish() {
+  size_t result = Atomic::sub(&_use_count, size_t(1));
+  assert(result != SIZE_MAX, "use count underflow");
 }
-
-void StringDedupQueue::push(uint worker_id, oop java_string) {
-  queue()->push_impl(worker_id, java_string);
-}
-
-oop StringDedupQueue::pop() {
-  return queue()->pop_impl();
-}
-
-#endif // SHARE_GC_SHARED_STRINGDEDUP_STRINGDEDUPQUEUE_INLINE_HPP

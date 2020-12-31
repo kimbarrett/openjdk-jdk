@@ -84,8 +84,7 @@ G1FullGCAdjustTask::G1FullGCAdjustTask(G1FullCollector* collector) :
     _references_done(false),
     _weak_proc_task(collector->workers()),
     _hrclaimer(collector->workers()),
-    _adjust(collector),
-    _string_dedup_cleaning_task(NULL, &_adjust, false) {
+    _adjust(collector) {
   // Need cleared claim bits for the roots processing
   ClassLoaderDataGraph::clear_claimed_marks();
 }
@@ -109,9 +108,6 @@ void G1FullGCAdjustTask::work(uint worker_id) {
   CLDToOopClosure adjust_cld(&_adjust, ClassLoaderData::_claim_strong);
   CodeBlobToOopClosure adjust_code(&_adjust, CodeBlobToOopClosure::FixRelocations);
   _root_processor.process_all_roots(&_adjust, &adjust_cld, &adjust_code);
-
-  // Adjust string dedup data structures.
-  _string_dedup_cleaning_task.work(worker_id);
 
   // Now adjust pointers region by region
   G1AdjustRegionClosure blk(collector(), worker_id);

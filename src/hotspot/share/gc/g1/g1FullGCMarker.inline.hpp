@@ -33,8 +33,8 @@
 #include "gc/g1/g1FullGCMarker.hpp"
 #include "gc/g1/g1FullGCOopClosures.inline.hpp"
 #include "gc/g1/g1StringDedup.hpp"
-#include "gc/g1/g1StringDedupQueue.hpp"
 #include "gc/shared/preservedMarks.inline.hpp"
+#include "gc/shared/stringdedup/stringDedup.hpp"
 #include "oops/access.inline.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "oops/oop.inline.hpp"
@@ -61,9 +61,10 @@ inline bool G1FullGCMarker::mark_object(oop obj) {
   }
 
   // Check if deduplicatable string.
-  if (G1StringDedup::is_enabled() &&
-      java_lang_String::is_instance_inlined(obj)) {
-    G1StringDedup::enqueue_from_mark(obj, _worker_id);
+  if (StringDedup::is_enabled() &&
+      java_lang_String::is_instance_inlined(obj) &&
+      G1StringDedup::is_candidate_from_mark(obj)) {
+    _string_dedup_requests.add(obj);
   }
   return true;
 }
