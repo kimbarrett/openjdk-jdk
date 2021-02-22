@@ -30,6 +30,7 @@
 #include "cds/cdsConfig.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "classfile/compactHashtable.hpp"
+#include "cppstdlib/utility.hpp"
 #include "memory/metaspaceClosure.hpp"
 #include "oops/instanceKlass.hpp"
 #include "prims/jvmtiExport.hpp"
@@ -59,7 +60,7 @@ class DumpTimeClassInfo: public CHeapObj<mtClass> {
       Symbol::maybe_increment_refcount(_name);
     }
     DTLoaderConstraint& operator=(DTLoaderConstraint src) {
-      swap(_name, src._name); // c++ copy-and-swap idiom
+      std::swap(_name, src._name); // c++ copy-and-swap idiom
       _loader_type1 = src._loader_type1;
       _loader_type2 = src._loader_type2;
       return *this;
@@ -98,8 +99,8 @@ class DumpTimeClassInfo: public CHeapObj<mtClass> {
       Symbol::maybe_increment_refcount(_from_name);
     }
     DTVerifierConstraint& operator=(DTVerifierConstraint src) {
-      swap(_name, src._name); // c++ copy-and-swap idiom
-      swap(_from_name, src._from_name); // c++ copy-and-swap idiom
+      std::swap(_name, src._name); // c++ copy-and-swap idiom
+      std::swap(_from_name, src._from_name); // c++ copy-and-swap idiom
       return *this;
     }
     ~DTVerifierConstraint() {

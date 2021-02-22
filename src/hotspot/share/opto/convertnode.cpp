@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cppstdlib/utility.hpp"
 #include "opto/addnode.hpp"
 #include "opto/castnode.hpp"
 #include "opto/connode.hpp"
@@ -542,7 +543,7 @@ static bool compute_updates_ranges_verif(const TypeInteger* tx, const TypeIntege
   jlong zlo = tz->lo_as_long();
   jlong zhi = tz->hi_as_long();
   if (n->is_Sub()) {
-    swap(ylo, yhi);
+    std::swap(ylo, yhi);
     ylo = -ylo;
     yhi = -yhi;
   }
@@ -555,7 +556,7 @@ static bool compute_updates_ranges_verif(const TypeInteger* tx, const TypeIntege
     return false;
   }
   if (n->is_Sub()) {
-    swap(rylo, ryhi);
+    std::swap(rylo, ryhi);
     rylo = -rylo;
     ryhi = -ryhi;
   }

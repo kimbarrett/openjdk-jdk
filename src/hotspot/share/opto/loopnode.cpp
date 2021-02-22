@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "ci/ciMethodData.hpp"
 #include "compiler/compileLog.hpp"
+#include "cppstdlib/utility.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/c2/barrierSetC2.hpp"
 #include "libadt/vectset.hpp"
@@ -850,7 +851,7 @@ bool PhaseIdealLoop::create_loop_nest(IdealLoopTree* loop, Node_List &old_new) {
   const TypeInteger* lo = _igvn.type(init)->is_integer(bt);
   const TypeInteger* hi = _igvn.type(limit)->is_integer(bt);
   if (stride_con < 0) {
-    swap(lo, hi);
+    std::swap(lo, hi);
   }
   if (hi->hi_as_long() <= lo->lo_as_long()) {
     // not a loop after all
@@ -1361,7 +1362,7 @@ void PhaseIdealLoop::transform_long_range_checks(int stride_con, const Node_List
     register_new_node(Q_max, entry_control);
 
     if (scale * stride_con < 0) {
-      swap(Q_min, Q_max);
+      std::swap(Q_min, Q_max);
     }
     // Now, mathematically, Q_max > Q_min, and they are close enough so that (Q_max-Q_min) fits in 32 bits.
 

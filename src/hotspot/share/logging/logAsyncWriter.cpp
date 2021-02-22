@@ -23,6 +23,7 @@
  *
  */
 #include "precompiled.hpp"
+#include "cppstdlib/utility.hpp"
 #include "logging/logAsyncWriter.hpp"
 #include "logging/logConfiguration.hpp"
 #include "logging/logFileOutput.hpp"
@@ -161,7 +162,7 @@ void AsyncLogWriter::run() {
       // Only doing a swap and statistics under the lock to
       // guarantee that I/O jobs don't block logsites.
       _buffer_staging->reset();
-      swap(_buffer, _buffer_staging);
+      std::swap(_buffer, _buffer_staging);
 
       // move counters to snapshot and reset them.
       _stats.iterate([&] (LogFileStreamOutput* output, uint32_t& counter) {

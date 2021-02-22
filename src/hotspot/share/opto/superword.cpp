@@ -22,6 +22,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cppstdlib/utility.hpp"
 #include "libadt/vectset.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"
@@ -2607,7 +2608,7 @@ bool SuperWord::output() {
             //      VectorBlend(VectorMaskCmp(LE_U, in1_cmp, in2_cmp), in1_blend, in2_blend)
             // <==> VectorBlend(VectorMaskCmp(GT_O, in1_cmp, in2_cmp), in2_blend, in1_blend)
             bol_test = bol->_test.negate();
-            swap(blend_in1, blend_in2);
+            std::swap(blend_in1, blend_in2);
           }
         }
 

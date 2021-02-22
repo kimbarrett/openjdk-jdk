@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cppstdlib/utility.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/c2/barrierSetC2.hpp"
 #include "memory/allocation.inline.hpp"
@@ -1237,7 +1238,7 @@ const Type* PhiNode::Value(PhaseGVN* phase) const {
           if (bt != BoolTest::ne) {
             jlong stride_con = stride_t->get_con_as_long(l->bt());
             if (stride_con < 0) {          // Down-counter loop
-              swap(lo, hi);
+              std::swap(lo, hi);
               jlong iv_range_lower_limit = lo->lo_as_long();
               // Prevent overflow when adding one below
               if (iv_range_lower_limit < max_signed_integer(l->bt())) {

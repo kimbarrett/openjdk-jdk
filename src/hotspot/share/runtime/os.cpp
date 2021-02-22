@@ -31,6 +31,7 @@
 #include "classfile/vmSymbols.hpp"
 #include "code/codeCache.hpp"
 #include "code/vtableStubs.hpp"
+#include "cppstdlib/utility.hpp"
 #include "gc/shared/gcVMOperations.hpp"
 #include "interpreter/interpreter.hpp"
 #include "jvm.h"
@@ -1852,7 +1853,7 @@ template <typename T>
 static void shuffle_fisher_yates(T* arr, unsigned num, FastRandom& frand) {
   for (unsigned i = num - 1; i >= 1; i--) {
     unsigned j = frand.next() % i;
-    swap(arr[i], arr[j]);
+    std::swap(arr[i], arr[j]);
   }
 }
 

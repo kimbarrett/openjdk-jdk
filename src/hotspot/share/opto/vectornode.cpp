@@ -22,6 +22,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cppstdlib/utility.hpp"
 #include "memory/allocation.inline.hpp"
 #include "opto/connode.hpp"
 #include "opto/mulnode.hpp"
@@ -1623,7 +1624,7 @@ Node* VectorNode::degenerate_vector_rotate(Node* src, Node* cnt, bool is_rotate_
 
   // Swap the computed left and right shift counts.
   if (is_rotate_left) {
-    swap(shiftRCnt,shiftLCnt);
+    std::swap(shiftRCnt,shiftLCnt);
   }
 
   if (!is_binary_vector_op) {

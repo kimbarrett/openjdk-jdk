@@ -25,6 +25,7 @@
 #ifndef SHARE_OOPS_OOPHANDLE_HPP
 #define SHARE_OOPS_OOPHANDLE_HPP
 
+#include "cppstdlib/utility.hpp"
 #include "metaprogramming/primitiveConversions.hpp"
 #include "oops/oopsHierarchy.hpp"
 
@@ -58,7 +59,7 @@ public:
   }
 
   void swap(OopHandle& copy) {
-    ::swap(_obj, copy._obj);
+    std::swap(_obj, copy._obj);
   }
 
   inline oop resolve() const;

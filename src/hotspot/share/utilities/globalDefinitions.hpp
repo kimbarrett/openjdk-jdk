@@ -1159,13 +1159,6 @@ inline int build_int_from_shorts( u2 low, u2 high ) {
   return ((int)((unsigned int)high << 16) | (unsigned int)low);
 }
 
-// swap a & b
-template<class T> static void swap(T& a, T& b) {
-  T tmp = a;
-  a = b;
-  b = tmp;
-}
-
 // array_size_impl is a function that takes a reference to T[N] and
 // returns a reference to char[N].  It is not ODR-used, so not defined.
 template<typename T, size_t N> char (&array_size_impl(T (&)[N]))[N];
@@ -1332,10 +1325,6 @@ template<typename K> int primitive_compare(const K& k0, const K& k1) {
 
 // Allow use of C++ thread_local when approved - see JDK-8282469.
 #define APPROVED_CPP_THREAD_LOCAL thread_local
-
-// Converts any type T to a reference type.
-template<typename T>
-std::add_rvalue_reference_t<T> declval() noexcept;
 
 // Quickly test to make sure IEEE-754 subnormal numbers are correctly
 // handled.

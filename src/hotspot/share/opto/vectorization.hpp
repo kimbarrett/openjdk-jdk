@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_VECTORIZATION_HPP
 #define SHARE_OPTO_VECTORIZATION_HPP
 
+#include "cppstdlib/utility.hpp"
 #include "opto/node.hpp"
 #include "opto/loopnode.hpp"
 #include "opto/traceAutoVectorizationTag.hpp"
@@ -1026,7 +1027,7 @@ public:
     // This guarantees that S2 is either identical to, a subset of,
     // or disjunct from S1 (but cannot be a strict superset of S1).
     if (s1->_q > s2->_q) {
-      swap(s1, s2);
+      std::swap(s1, s2);
     }
     assert(s1->_q <= s2->_q, "s1 is a smaller modulo space than s2");
 

@@ -25,6 +25,7 @@
 #ifndef SHARE_RUNTIME_VMSTRUCTS_HPP
 #define SHARE_RUNTIME_VMSTRUCTS_HPP
 
+#include "cppstdlib/utility.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/globalDefinitions.hpp"
 #ifdef COMPILER1
@@ -191,7 +192,7 @@ private:
 #define CHECK_NONSTATIC_VM_STRUCT_ENTRY(typeName, fieldName, type) { \
   static_assert( \
     std::is_convertible< \
-      std::add_pointer_t<decltype(declval<typeName>().fieldName)>, \
+      std::add_pointer_t<decltype(std::declval<typeName>().fieldName)>, \
       std::add_pointer_t<type>>::value, \
     "type mismatch for " XSTR(fieldName) " member of " XSTR(typeName)); \
   assert(offset_of(typeName, fieldName) < sizeof(typeName), "..."); \

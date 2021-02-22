@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_PHASEX_HPP
 #define SHARE_OPTO_PHASEX_HPP
 
+#include "cppstdlib/utility.hpp"
 #include "libadt/dict.hpp"
 #include "libadt/vectset.hpp"
 #include "memory/resourceArea.hpp"
@@ -138,8 +139,8 @@ public:
   void swap(Type_Array &other) {
     if (this != &other) {
       assert(_a == other._a, "swapping for differing arenas is probably a bad idea");
-      ::swap(_max, other._max);
-      ::swap(_types, other._types);
+      std::swap(_max, other._max);
+      std::swap(_types, other._types);
     }
   }
   NONCOPYABLE(Type_Array);

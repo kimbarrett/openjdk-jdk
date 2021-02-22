@@ -32,6 +32,8 @@
 #include "nmt/virtualMemoryTracker.hpp"
 #include "oops/instanceKlass.hpp"
 
+#include <utility>
+
 /*
  * Base class that provides helpers
 */
@@ -84,7 +86,7 @@ class MemReporterBase : public StackObj {
     bool is_negative = false;
     if (s1 < s2) {
       is_negative = true;
-      swap(s1, s2);
+      std::swap(s1, s2);
     }
 
     size_t amount = s1 - s2;

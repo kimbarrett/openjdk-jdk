@@ -25,6 +25,7 @@
 #ifndef SHARE_UTILITIES_GROWABLEARRAY_HPP
 #define SHARE_UTILITIES_GROWABLEARRAY_HPP
 
+#include "cppstdlib/utility.hpp"
 #include "memory/allocation.hpp"
 #include "memory/iterator.hpp"
 #include "utilities/debug.hpp"
@@ -487,9 +488,9 @@ public:
   }
 
   void swap(GrowableArrayWithAllocator<E, Derived>* other) {
-    ::swap(this->_data, other->_data);
-    ::swap(this->_len, other->_len);
-    ::swap(this->_capacity, other->_capacity);
+    std::swap(this->_data, other->_data);
+    std::swap(this->_len, other->_len);
+    std::swap(this->_capacity, other->_capacity);
   }
 
   // Ensure capacity is at least new_capacity.

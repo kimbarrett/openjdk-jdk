@@ -27,6 +27,7 @@
 #include "asm/macroAssembler.inline.hpp"
 #include "ci/ciReplay.hpp"
 #include "classfile/javaClasses.hpp"
+#include "cppstdlib/utility.hpp"
 #include "code/exceptionHandlerTable.hpp"
 #include "code/nmethod.hpp"
 #include "compiler/compilationFailureInfo.hpp"
@@ -5176,7 +5177,7 @@ void Compile::shuffle_macro_nodes() {
   }
   for (uint i = _macro_nodes.length() - 1; i >= 1; i--) {
     uint j = C->random() % (i + 1);
-    swap(_macro_nodes.at(i), _macro_nodes.at(j));
+    std::swap(_macro_nodes.at(i), _macro_nodes.at(j));
   }
 }
 
