@@ -41,6 +41,9 @@ class PSOldGen : public CHeapObj<mtGC> {
   ObjectStartArray         _start_array;       // Keeps track of where objects start in a 512b block
   MutableSpace*            _object_space;      // Where all the objects live
 
+  // Size of pretouch chunks when expanding for allocation.
+  size_t                   _pretouch_stride_words;
+
   // Performance Counters
   PSGenerationCounters*    _gen_counters;
   SpaceCounters*           _space_counters;
@@ -80,6 +83,7 @@ class PSOldGen : public CHeapObj<mtGC> {
   }
 
   bool expand_for_allocate(size_t word_size);
+  bool expand_for_allocate_impl(size_t word_size);
   bool expand(size_t bytes);
   bool expand_by(size_t bytes);
   bool expand_to_reserved();
@@ -93,6 +97,7 @@ class PSOldGen : public CHeapObj<mtGC> {
   void initialize_virtual_space(ReservedSpace rs, size_t initial_size, size_t alignment);
   void initialize_work(const char* perf_data_name, int level);
   void initialize_performance_counters(const char* perf_data_name, int level);
+  void initialize_pretouch_stride();
 
  public:
   // Initialize the generation.

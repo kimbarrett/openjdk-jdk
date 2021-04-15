@@ -34,11 +34,16 @@
 #include "gc/shared/spaceDecorator.inline.hpp"
 #include "logging/log.hpp"
 #include "oops/oop.inline.hpp"
+#include "runtime/atomic.hpp"
 #include "runtime/java.hpp"
+#include "runtime/os.hpp"
 #include "utilities/align.hpp"
+#include "utilities/globalDefinitions.hpp"
+#include "utilities/macros.hpp"
 
 PSOldGen::PSOldGen(ReservedSpace rs, size_t initial_size, size_t min_size,
                    size_t max_size, const char* perf_data_name, int level):
+  _pretouch_stride_words(0),
   _min_gen_size(min_size),
   _max_gen_size(max_size)
 {
@@ -47,6 +52,7 @@ PSOldGen::PSOldGen(ReservedSpace rs, size_t initial_size, size_t min_size,
 
 void PSOldGen::initialize(ReservedSpace rs, size_t initial_size, size_t alignment,
                           const char* perf_data_name, int level) {
+  initialize_pretouch_stride();
   initialize_virtual_space(rs, initial_size, alignment);
   initialize_work(perf_data_name, level);
 
@@ -55,6 +61,14 @@ void PSOldGen::initialize(ReservedSpace rs, size_t initial_size, size_t alignmen
   assert(_reserved.byte_size() <= max_gen_size(), "Consistency check");
 
   initialize_performance_counters(perf_data_name, level);
+}
+
+void PSOldGen::initialize_pretouch_stride() {
+  size_t page_size = os::vm_page_size();
+  if (UseLargePages LINUX_ONLY(&& !UseTransparentHugePages)) {
+    page_size = os::large_page_size();
+  }
+  _pretouch_stride_words = page_size / HeapWordSize;
 }
 
 void PSOldGen::initialize_virtual_space(ReservedSpace rs,
@@ -178,21 +192,57 @@ void PSOldGen::object_iterate_block(ObjectClosure* cl, size_t block_index) {
   }
 }
 
-bool PSOldGen::expand_for_allocate(size_t word_size) {
+bool PSOldGen::expand_for_allocate_impl(size_t word_size) {
   assert(word_size > 0, "allocating zero words?");
-  bool result = true;
+  HeapWord* old_end;
+  HeapWord* pretouch_end;
   {
     MutexLocker x(ExpandHeap_lock);
-    // Avoid "expand storms" by rechecking available space after obtaining
-    // the lock, because another thread may have already made sufficient
-    // space available.  If insufficient space available, that will remain
-    // true until we expand, since we have the lock.  Other threads may take
-    // the space we need before we can allocate it, regardless of whether we
-    // expand.  That's okay, we'll just try expanding again.
-    if (object_space()->needs_expand(word_size)) {
-      result = expand(word_size*HeapWordSize);
+    old_end = object_space()->end();
+    if (word_size <= pointer_delta(old_end, object_space()->top())) {
+      // Avoid "expand storms" by rechecking available space after obtaining
+      // the lock. Another thread may have expanded after our failed allocation.
+      return true;
+    } else if (!expand(word_size * HeapWordSize)) {
+      return false;             // Expansion failed.
+    } else {
+      // Expansion succeeded and we want to pretouch the expanded region.
+      // Capture end before releasing the lock.
+      pretouch_end = object_space()->end();
     }
   }
+  // Pretouch the newly expanded region while permitting other threads to
+  // use the new space immediately, or to perform further expansions.  If
+  // the page size (the stride) is larger than the typical allocation size,
+  // multiple threads can stall waiting for a single page.  Pretouching
+  // ahead of the allocation wave mitigates that.
+  size_t stride = _pretouch_stride_words;
+  size_t stride_align = stride * HeapWordSize;
+  // Use inclusive aligned end, to avoid needing overflow checks.
+  pretouch_end = align_down(pretouch_end - 1, stride_align);
+  if (old_end <= pretouch_end) {
+    HeapWord* p = align_up(old_end, stride_align);
+    HeapWord* volatile* top_addr = object_space()->top_addr();
+    while (true) {
+      // Try to leave touching allocated pages to allocating threads.
+      HeapWord* alloc = Atomic::load_acquire(top_addr);
+      if (alloc > p) {
+        if (alloc > pretouch_end) break; // All pages touched or allocated.
+        p = align_up(alloc, stride_align);
+      }
+      assert(p <= pretouch_end, "invariant");
+      // Touch safely for concurrent use by other threads that may have
+      // allocated a range containing p after we advanced p past top().
+      Atomic::add(reinterpret_cast<int*>(p), 0, memory_order_relaxed);
+      if (p >= pretouch_end) break;      // All pages touched or allocated.
+      p += stride;
+    }
+  }
+  return true;
+}
+
+bool PSOldGen::expand_for_allocate(size_t word_size) {
+  bool result = expand_for_allocate_impl(word_size);
   if (GCExpandToAllocateDelayMillis > 0) {
     os::naked_sleep(GCExpandToAllocateDelayMillis);
   }
