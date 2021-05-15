@@ -34,11 +34,15 @@
 #include "gc/shared/spaceDecorator.inline.hpp"
 #include "logging/log.hpp"
 #include "oops/oop.inline.hpp"
+#include "runtime/atomic.hpp"
 #include "runtime/java.hpp"
 #include "utilities/align.hpp"
 
 PSOldGen::PSOldGen(ReservedSpace rs, size_t initial_size, size_t min_size,
                    size_t max_size, const char* perf_data_name, int level):
+  _alloc_pretouch_next(NULL),
+  _alloc_pretouch_stride_words(0),
+  _alloc_pretouch_limit_words(0),
   _min_gen_size(min_size),
   _max_gen_size(max_size)
 {
@@ -47,6 +51,7 @@ PSOldGen::PSOldGen(ReservedSpace rs, size_t initial_size, size_t min_size,
 
 void PSOldGen::initialize(ReservedSpace rs, size_t initial_size, size_t alignment,
                           const char* perf_data_name, int level) {
+  initialize_allocation_pretouch();
   initialize_virtual_space(rs, initial_size, alignment);
   initialize_work(perf_data_name, level);
 
@@ -55,6 +60,18 @@ void PSOldGen::initialize(ReservedSpace rs, size_t initial_size, size_t alignmen
   assert(_reserved.byte_size() <= max_gen_size(), "Consistency check");
 
   initialize_performance_counters(perf_data_name, level);
+}
+
+void PSOldGen::initialize_allocation_pretouch() {
+  // Stride is the page size, in words.
+  size_t page_size = os::vm_page_size();
+  if (UseLargePages LINUX_ONLY(&& !UseTransparentHugePages)) {
+    page_size = os::large_page_size();
+  }
+  assert(is_power_of_2(page_size), "expected power of 2 page size %zu", page_size);
+  _alloc_pretouch_stride_words = page_size / HeapWordSize;
+  // Limit is a bound on the number of pages ahead we try to pretouch.
+  _alloc_pretouch_limit_words = _alloc_pretouch_stride_words * ParallelGCThreads;
 }
 
 void PSOldGen::initialize_virtual_space(ReservedSpace rs,
@@ -178,25 +195,88 @@ void PSOldGen::object_iterate_block(ObjectClosure* cl, size_t block_index) {
   }
 }
 
-bool PSOldGen::expand_for_allocate(size_t word_size) {
-  assert(word_size > 0, "allocating zero words?");
-  bool result = true;
-  {
-    MutexLocker x(ExpandHeap_lock);
-    // Avoid "expand storms" by rechecking available space after obtaining
-    // the lock, because another thread may have already made sufficient
-    // space available.  If insufficient space available, that will remain
-    // true until we expand, since we have the lock.  Other threads may take
-    // the space we need before we can allocate it, regardless of whether we
-    // expand.  That's okay, we'll just try expanding again.
-    if (object_space()->needs_expand(word_size)) {
-      result = expand(word_size*HeapWordSize);
+// Cooperative concurrent pretouch, driven by allocation.  As each thread
+// allocates a new chunk from the current allocation region, it tries to
+// drive the pretouch wave forward.  If the page size is large compared to
+// the typical allocation chunk size then we could have many threads waiting
+// for the same page to be mapped in.  Pretouching pages ahead of the
+// allocation wave can mitigate that.
+void PSOldGen::pretouch_during_allocation(HeapWord* alloc, size_t alloc_size) {
+  // When the allocation chunk size is typically greater than the page size
+  // there's little benefit to pretouching pages ahead of the allocation
+  // wave.  Instead, each thread maps in the pages it is using.  The size of
+  // the current chunk is used as a stand-in for the typical allocation size.
+  if (_alloc_pretouch_stride_words <= alloc_size) return;
+  // Both the next pretouch pointer and the allocation end may be updated
+  // concurrently and independently.  The calculation of which page to touch
+  // is robust against such vagaries, because both monotonically increase.
+  HeapWord* touch = Atomic::load(&_alloc_pretouch_next);
+  HeapWord* alloc_end = Atomic::load(object_space()->end_addr());
+  // If pretouching has reached the allocation end then done.
+  if (touch >= alloc_end) return;
+  // Try to leave touching already allocated pages to allocating threads, by
+  // advancing touch pointer past our just allocated chunk if needed.
+  HeapWord* old_touch = touch;  // Save old value for cmpxchg advancement.
+  size_t stride_align = _alloc_pretouch_stride_words * HeapWordSize;
+  HeapWord* new_alloc = alloc + alloc_size;
+  if (new_alloc > touch) {
+    if (new_alloc > align_down(alloc_end - 1, stride_align)) {
+      // Already into the last page of the allocatable range, so pretouching
+      // is done.  Attempt to advance the next touch pointer so future calls
+      // will bail out earlier.
+      Atomic::cmpxchg(&_alloc_pretouch_next, old_touch, alloc_end);
+      return;
     }
+    // Pretouch the pages following the chunk just allocated.
+    touch = align_up(new_alloc, stride_align);
+  } else if (pointer_delta(touch, new_alloc) > _alloc_pretouch_limit_words) {
+    // If the touch pointer is sufficiently far ahead of the allocation
+    // pointer then don't bother touching and advancing yet.  We'd rather
+    // have threads doing useful work than touching pages that may not be
+    // needed any time soon, or perhaps ever.
+    return;
   }
+  assert(touch <= align_down(alloc_end - 1, stride_align), "invariant");
+  assert(is_aligned(touch, stride_align), "invariant");
+  // Next touch pointer is current + stride, limited by alloc_end.
+  // The addition can overflow, so can't use MIN2.
+  HeapWord* next_touch = touch + _alloc_pretouch_stride_words;
+  if (pointer_delta(alloc_end, touch) < _alloc_pretouch_stride_words) {
+    next_touch = alloc_end;
+  }
+  // Attempt to advance the next touch pointer, claiming responsibility for
+  // touching the current touch pointer if successful.  If the cmpxchg fails
+  // then some other thread advanced the touch pointer, though not
+  // necessarily as far as we would have.  That's okay; some future pretouch
+  // step can make up for it.  The assumption is that failures can occur but
+  // are infrequent, because the allocations this supports are either LABs
+  // or for objects too large for LAB allocation.
+  if (Atomic::cmpxchg(&_alloc_pretouch_next, old_touch, next_touch) == old_touch) {
+    // Touch safely for concurrent use by another thread that may have
+    // allocated a range countaing the touch pointer.
+    Atomic::add(reinterpret_cast<int*>(touch), 0, memory_order_relaxed);
+  }
+}
+
+bool PSOldGen::expand_for_allocate(size_t word_size) {
+  bool result = expand_for_allocate_impl(word_size);
   if (GCExpandToAllocateDelayMillis > 0) {
     os::naked_sleep(GCExpandToAllocateDelayMillis);
   }
   return result;
+}
+
+bool PSOldGen::expand_for_allocate_impl(size_t word_size) {
+  assert(word_size > 0, "allocating zero words?");
+  MutexLocker x(ExpandHeap_lock);
+  HeapWord* old_end = object_space()->end();
+  if (word_size <= pointer_delta(old_end, object_space()->top())) {
+    // Avoid "expand storms" by rechecking available space after obtaining
+    // the lock.  Another thread may have expanded after our failed allocation.
+    return true;
+  } else {
+    return expand(word_size * HeapWordSize);
+  }
 }
 
 bool PSOldGen::expand(size_t bytes) {
@@ -370,6 +450,21 @@ void PSOldGen::post_resize() {
                              SpaceDecorator::DontMangle,
                              MutableSpace::SetupPages,
                              workers);
+
+  // Update the allocation pretouch pointer if needed.  If workers is NULL
+  // then we're allocating by a worker thread, so expanding and with
+  // concurrent pretouching active, so the pretouch pointer should not be
+  // updated here.
+  if (workers != NULL) {
+    // If AlwaysPreTouch then the space initialization will have already
+    // touched the pages up to the end of the region.  Otherwise, leave the
+    // pretouch pointer as-is, unless the resize is shrinking the region.
+    HeapWord* next_pretouch = new_memregion.end();
+    if (!AlwaysPreTouch) {
+      next_pretouch = MIN2(next_pretouch, Atomic::load(&_alloc_pretouch_next));
+    }
+    Atomic::store(&_alloc_pretouch_next, next_pretouch);
+  }
 
   assert(new_word_size == heap_word_size(object_space()->capacity_in_bytes()),
     "Sanity");

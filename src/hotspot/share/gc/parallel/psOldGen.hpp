@@ -45,6 +45,10 @@ class PSOldGen : public CHeapObj<mtGC> {
   PSGenerationCounters*    _gen_counters;
   SpaceCounters*           _space_counters;
 
+  HeapWord* volatile _alloc_pretouch_next;
+  size_t _alloc_pretouch_stride_words;
+  size_t _alloc_pretouch_limit_words;
+
   // Sizing information, in bytes, set in constructor
   const size_t _min_gen_size;
   const size_t _max_gen_size;
@@ -75,11 +79,15 @@ class PSOldGen : public CHeapObj<mtGC> {
     if (res != NULL) {
       DEBUG_ONLY(assert_block_in_covered_region(MemRegion(res, word_size)));
       _start_array.allocate_block(res);
+      pretouch_during_allocation(res, word_size);
     }
     return res;
   }
 
+  void pretouch_during_allocation(HeapWord* alloc, size_t alloc_size);
+
   bool expand_for_allocate(size_t word_size);
+  bool expand_for_allocate_impl(size_t word_size);
   bool expand(size_t bytes);
   bool expand_by(size_t bytes);
   bool expand_to_reserved();
@@ -93,6 +101,7 @@ class PSOldGen : public CHeapObj<mtGC> {
   void initialize_virtual_space(ReservedSpace rs, size_t initial_size, size_t alignment);
   void initialize_work(const char* perf_data_name, int level);
   void initialize_performance_counters(const char* perf_data_name, int level);
+  void initialize_allocation_pretouch();
 
  public:
   // Initialize the generation.

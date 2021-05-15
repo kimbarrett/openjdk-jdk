@@ -118,7 +118,7 @@ void MutableSpace::initialize(MemRegion mr,
       numa_setup_pages(tail, clear_space);
     }
 
-    if (AlwaysPreTouch) {
+    if (AlwaysPreTouch && (pretouch_gang != NULL)) {
       size_t page_size = UseLargePages ? os::large_page_size() : os::vm_page_size();
 
       PretouchTask::pretouch("ParallelGC PreTouch head", (char*)head.start(), (char*)head.end(),
@@ -213,15 +213,6 @@ HeapWord* MutableSpace::cas_allocate(size_t size) {
 bool MutableSpace::cas_deallocate(HeapWord *obj, size_t size) {
   HeapWord* expected_top = obj + size;
   return Atomic::cmpxchg(top_addr(), expected_top, obj) == expected_top;
-}
-
-// Only used by oldgen allocation.
-bool MutableSpace::needs_expand(size_t word_size) const {
-  assert_lock_strong(ExpandHeap_lock);
-  // Holding the lock means end is stable.  So while top may be advancing
-  // via concurrent allocations, there is no need to order the reads of top
-  // and end here, unlike in cas_allocate.
-  return pointer_delta(end(), top()) < word_size;
 }
 
 void MutableSpace::oop_iterate(OopIterateClosure* cl) {
