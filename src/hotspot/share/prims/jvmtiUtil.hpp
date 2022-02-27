@@ -26,7 +26,6 @@
 #define SHARE_PRIMS_JVMTIUTIL_HPP
 
 #include "jvmtifiles/jvmti.h"
-#include "memory/resourceArea.hpp"
 #include "prims/jvmtiEventController.hpp"
 #include "runtime/threads.hpp"
 
@@ -39,14 +38,10 @@
 
 class JvmtiUtil : AllStatic {
 
-  static ResourceArea* _single_threaded_resource_area;
-
   static const char* _error_names[];
   static const bool  _event_threaded[];
 
 public:
-
-  static ResourceArea* single_threaded_resource_area();
 
   static const char* error_name(int num)    { return _error_names[num]; }    // To Do: add range checking
 
@@ -62,35 +57,6 @@ public:
     ShouldNotReachHere();
     return false;
   }
-};
-
-
-///////////////////////////////////////////////////////////////
-//
-// class SafeResourceMark
-//
-// ResourceMarks that work before threads exist
-//
-
-class SafeResourceMark : public ResourceMark {
-
-  ResourceArea* safe_resource_area() {
-    Thread* thread;
-
-    if (Threads::number_of_threads() == 0) {
-      return JvmtiUtil::single_threaded_resource_area();
-    }
-    thread = Thread::current_or_null();
-    if (thread == nullptr) {
-      return JvmtiUtil::single_threaded_resource_area();
-    }
-    return thread->resource_area();
-  }
-
- public:
-
-  SafeResourceMark() : ResourceMark(safe_resource_area()) {}
-
 };
 
 #endif // SHARE_PRIMS_JVMTIUTIL_HPP

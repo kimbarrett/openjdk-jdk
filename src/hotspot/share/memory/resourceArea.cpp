@@ -43,18 +43,6 @@ void ResourceArea::bias_to(MEMFLAGS new_flags) {
 
 #ifdef ASSERT
 
-ResourceMark::ResourceMark(ResourceArea* area, Thread* thread) :
-    _impl(area),
-    _thread(thread),
-    _previous_resource_mark(nullptr)
-{
-  if (_thread != nullptr) {
-    assert(_thread == Thread::current(), "not the current thread");
-    _previous_resource_mark = _thread->current_resource_mark();
-    _thread->set_current_resource_mark(this);
-  }
-}
-
 void ResourceArea::verify_has_resource_mark() {
   if (_nesting <= 0 && !VMError::is_error_reported()) {
     // Only report the first occurrence of an allocating thread that
@@ -70,6 +58,66 @@ void ResourceArea::verify_has_resource_mark() {
 }
 
 #endif // ASSERT
+
+// We're building a linked list of stack-allocated objects, with the current
+// head recorded in the current Thread object and removed by the destructor.
+// gcc doesn't recognize this and thinks we're doing something potentially
+// problematic by recording a stack pointer in a non-stack location.  We
+// should be able to disable the -Wdangling-pointer warning, but attempts to
+// do so either here or Thread::set_current_resource_mark_state have failed.
+// So we put this function out of line in the hope of obfuscating the
+// connection between the stack value and the location where it is being
+// stored.
+ResourceMarkForThread::ResourceMarkForThread(Thread* thread)
+  : _thread(thread),
+    _state(thread->resource_area(), thread->current_resource_mark_state())
+{
+  assert(thread == Thread::current(), "not the current thread");
+  thread->set_current_resource_mark_state(&_state);
+}
+
+ResourceArea* SafeResourceMark::_nothreads_resource_area = nullptr;
+const ResourceMarkState* SafeResourceMark::_nothreads_current_state = nullptr;
+
+Thread* SafeResourceMark::current_thread_or_null() {
+  if (Threads::number_of_threads() == 0) {
+    return nullptr;
+  } else {
+    return Thread::current();
+  }
+}
+
+ResourceArea* SafeResourceMark::resource_area(Thread* thread) {
+  if (thread != nullptr) {
+    return thread->resource_area();
+  } else {
+    ResourceArea* ra = _nothreads_resource_area;
+    if (ra == nullptr) {
+      // Lazily create the early resource area.
+      // Use a size which is not a standard since pools may not exist yet either.
+      ra = new (mtInternal) ResourceArea(Chunk::non_pool_size);
+      _nothreads_resource_area = ra;
+    }
+    return ra;
+  }
+}
+
+const ResourceMarkState* SafeResourceMark::current_state(Thread* thread) {
+  if (thread != nullptr) {
+    return thread->current_resource_mark_state();
+  } else {
+    return _nothreads_current_state;
+  }
+}
+
+void SafeResourceMark::set_current_state(Thread* thread,
+                                         const ResourceMarkState* state) {
+  if (thread != nullptr) {
+    thread->set_current_resource_mark_state(state);
+  } else {
+    _nothreads_current_state = state;
+  }
+}
 
 //------------------------------ResourceMark-----------------------------------
 // The following routines are declared in allocation.hpp and used everywhere:

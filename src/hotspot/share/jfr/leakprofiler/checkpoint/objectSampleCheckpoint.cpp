@@ -41,7 +41,7 @@
 #include "jfr/utilities/jfrHashtable.hpp"
 #include "jfr/utilities/jfrPredicate.hpp"
 #include "jfr/utilities/jfrRelation.hpp"
-#include "memory/resourceArea.inline.hpp"
+#include "memory/resourceArea.hpp"
 #include "oops/instanceKlass.inline.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/javaThread.hpp"

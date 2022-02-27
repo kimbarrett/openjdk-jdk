@@ -47,7 +47,7 @@
 #include "jfr/writers/jfrJavaEventWriter.hpp"
 #include "logging/log.hpp"
 #include "logging/logStream.hpp"
-#include "memory/resourceArea.inline.hpp"
+#include "memory/resourceArea.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/globals_extension.hpp"
 #include "utilities/growableArray.hpp"
