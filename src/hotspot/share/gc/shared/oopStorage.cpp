@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "cppstdlib/memory.hpp"
 #include "gc/shared/oopStorage.inline.hpp"
 #include "gc/shared/oopStorageParState.inline.hpp"
 #include "logging/log.hpp"
@@ -192,13 +193,7 @@ void OopStorage::ActiveArray::copy_from(const ActiveArray* from) {
   assert(_block_count == 0, "array must be empty");
   size_t count = from->_block_count;
   assert(count <= _size, "precondition");
-  Block* const* from_ptr = from->block_ptr(0);
-  Block** to_ptr = block_ptr(0);
-  for (size_t i = 0; i < count; ++i) {
-    Block* block = *from_ptr++;
-    assert(block->active_index() == i, "invariant");
-    *to_ptr++ = block;
-  }
+  std::uninitialized_copy_n(from->block_ptr(0), count, block_ptr(0));
   _block_count = count;
 }
 
