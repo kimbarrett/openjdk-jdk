@@ -2471,8 +2471,11 @@ LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
 
 static inline void report_error(Thread* t, DWORD exception_code,
                                 address addr, void* siginfo, void* context) {
-  VMError::report_and_die(t, exception_code, addr, siginfo, context);
-
+  VMError::report_and_maybe_die((UseOSErrorReporting
+                                 ? VMError::AfterReportAction::Return
+                                 : VMError::AfterReportAction::Die),
+                                t, exception_code, addr, siginfo, context,
+                                "%s", "");
   // If UseOSErrorReporting, this will return here and save the error file
   // somewhere where we can find it in the minidump.
 }
