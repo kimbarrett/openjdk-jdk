@@ -56,7 +56,7 @@
 #include "runtime/osThread.hpp"
 #include "runtime/safefetch.hpp"
 #include "runtime/sharedRuntime.hpp"
-#include "runtime/threadCrashProtection.hpp"
+#include "runtime/threadAccessContext.hpp"
 #include "runtime/threadSMR.hpp"
 #include "runtime/vmOperations.hpp"
 #include "runtime/vm_version.hpp"
@@ -624,10 +624,6 @@ static bool has_reached_max_malloc_test_peak(size_t alloc_size) {
 }
 
 #ifdef ASSERT
-static void check_crash_protection() {
-  assert(!ThreadCrashProtection::is_crash_protected(Thread::current_or_null()),
-         "not allowed when crash protection is set");
-}
 static void break_if_ptr_caught(void* ptr) {
   if (p2i(ptr) == (intptr_t)MallocCatchPtr) {
     log_warning(malloc, free)("ptr caught: " PTR_FORMAT, p2i(ptr));
@@ -650,7 +646,9 @@ void* os::malloc(size_t size, MEMFLAGS memflags, const NativeCallStack& stack) {
     return rc;
   }
 
-  DEBUG_ONLY(check_crash_protection());
+  // Allocation not allowed when accessing another thread, which might be in
+  // the midst of the allocator itself.
+  ThreadAccessContext::assert_not_active();
 
   // On malloc(0), implementations of malloc(3) have the choice to return either
   // null or a unique non-null pointer. To unify libc behavior across our platforms
@@ -702,7 +700,9 @@ void* os::realloc(void *memblock, size_t size, MEMFLAGS memflags, const NativeCa
     return os::malloc(size, memflags, stack);
   }
 
-  DEBUG_ONLY(check_crash_protection());
+  // Allocation not allowed when accessing another thread, which might be in
+  // the midst of the allocator itself.
+  ThreadAccessContext::assert_not_active();
 
   // On realloc(p, 0), implementers of realloc(3) have the choice to return either
   // null or a unique non-null pointer. To unify libc behavior across our platforms

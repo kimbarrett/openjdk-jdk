@@ -26,11 +26,13 @@
 #ifndef SHARE_UTILITIES_VMERROR_HPP
 #define SHARE_UTILITIES_VMERROR_HPP
 
+#include "memory/allStatic.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/ostream.hpp"
 
-class Decoder;
 class frame;
-class VM_ReportJavaOutOfMemory;
+class JavaThread;
+class Thread;
 
 class VMError : public AllStatic {
   friend class VMStructs;
@@ -103,19 +105,10 @@ class VMError : public AllStatic {
   static void print_stack_trace(outputStream* st, JavaThread* jt,
                                 char* buf, int buflen, bool verbose = false);
 
-  static const char* get_filename_only() {
-    char separator = os::file_separator()[0];
-    const char* p = strrchr(_filename, separator);
-    return p ? p+1 : _filename;
-  }
+  static const char* get_filename_only();
 
-  static bool should_report_bug(unsigned int id) {
-    return (id != OOM_MALLOC_ERROR) && (id != OOM_MMAP_ERROR);
-  }
-
-  static bool should_submit_bug_report(unsigned int id) {
-    return should_report_bug(id) && (id != OOM_JAVA_HEAP_FATAL);
-  }
+  static bool should_report_bug(unsigned int id);
+  static bool should_submit_bug_report(unsigned int id);
 
   // Write a hint to the stream in case siginfo relates to a segv/bus error
   // and the offending address points into CDS store.

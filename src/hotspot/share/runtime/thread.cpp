@@ -103,6 +103,7 @@ Thread::Thread() {
 
   // plain initialization
   debug_only(_owned_locks = nullptr;)
+  DEBUG_ONLY(_in_thread_access_context = false;)
   NOT_PRODUCT(_skip_gcalot = false;)
   _jvmti_env_iteration_count = 0;
   set_allocated_bytes(0);

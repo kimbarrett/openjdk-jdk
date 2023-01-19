@@ -243,6 +243,20 @@ void VMError::print_stack_trace(outputStream* st, JavaThread* jt,
 #endif // ZERO
 }
 
+const char* VMError::get_filename_only() {
+  char separator = os::file_separator()[0];
+  const char* p = strrchr(_filename, separator);
+  return p ? p+1 : _filename;
+}
+
+bool VMError::should_report_bug(unsigned int id) {
+  return (id != OOM_MALLOC_ERROR) && (id != OOM_MMAP_ERROR);
+}
+
+bool VMError::should_submit_bug_report(unsigned int id) {
+  return should_report_bug(id) && (id != OOM_JAVA_HEAP_FATAL);
+}
+
 /**
  * Adds `value` to `list` iff it's not already present and there is sufficient
  * capacity (i.e. length(list) < `list_capacity`). The length of the list

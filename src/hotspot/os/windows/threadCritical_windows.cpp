@@ -25,6 +25,7 @@
 #include "precompiled.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/javaThread.hpp"
+#include "runtime/threadAccessContext.hpp"
 #include "runtime/threadCritical.hpp"
 
 // OS-includes here
@@ -58,6 +59,7 @@ static BOOL WINAPI initialize(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Conte
 }
 
 ThreadCritical::ThreadCritical() {
+  ThreadAccessContext::assert_not_active();
   InitOnceExecuteOnce(&initialized, &initialize, NULL, NULL);
 
   DWORD current_thread = GetCurrentThreadId();

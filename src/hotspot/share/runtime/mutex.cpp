@@ -31,7 +31,7 @@
 #include "runtime/os.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/safepointMechanism.inline.hpp"
-#include "runtime/threadCrashProtection.hpp"
+#include "runtime/threadAccessContext.hpp"
 #include "utilities/events.hpp"
 #include "utilities/macros.hpp"
 
@@ -57,8 +57,8 @@ void Mutex::check_block_state(Thread* thread) {
     fatal("VM thread could block on lock that may be held by a JavaThread during safepoint: %s", name());
   }
 
-  assert(!ThreadCrashProtection::is_crash_protected(thread),
-         "locking not allowed when crash protection is set");
+  // Locking not allowed while accessing another thread.
+  ThreadAccessContext::assert_not_active();
 }
 
 void Mutex::check_safepoint_state(Thread* thread) {

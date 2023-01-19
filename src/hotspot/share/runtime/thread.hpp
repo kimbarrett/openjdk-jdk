@@ -232,6 +232,22 @@ class Thread: public ThreadShadow {
   bool is_suspendible_thread() { return _suspendible_thread; }
 #endif
 
+  // Support for ThreadAccessContext
+#ifdef ASSERT
+ private:
+  bool _in_thread_access_context;
+
+ public:
+  bool in_thread_access_context() const {
+    return _in_thread_access_context;
+  }
+
+  void set_in_thread_access_context(bool new_state) {
+    _in_thread_access_context = new_state;
+  }
+
+#endif // ASSERT
+
  private:
   // Point to the last handle mark
   HandleMark* _last_handle_mark;

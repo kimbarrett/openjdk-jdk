@@ -43,6 +43,7 @@
 #include "runtime/semaphore.hpp"
 #include "runtime/stackWatermark.hpp"
 #include "runtime/suspendedThreadTask.hpp"
+#include "runtime/threadAccessContext.hpp"
 #include "runtime/threadCrashProtection.hpp"
 #include "runtime/threadSMR.hpp"
 #include "utilities/systemMemoryBarrier.hpp"
@@ -159,6 +160,12 @@ class OSThreadSamplerCallback : public CrashProtectionCallback {
   const SuspendedThreadTaskContext& _context;
 };
 
+static bool protected_call(CrashProtectionCallback& callback) {
+  ThreadAccessContext tac{};
+  ThreadCrashProtection crash_protection;
+  return crash_protection.call(callback);
+}
+
 void OSThreadSampler::do_task(const SuspendedThreadTaskContext& context) {
 #ifndef ASSERT
   guarantee(JfrOptionSet::sample_protection(), "Sample Protection should be on in product builds");
@@ -168,11 +175,11 @@ void OSThreadSampler::do_task(const SuspendedThreadTaskContext& context) {
 
   if (JfrOptionSet::sample_protection()) {
     OSThreadSamplerCallback cb(*this, context);
-    ThreadCrashProtection crash_protection;
-    if (!crash_protection.call(cb)) {
+    if (!protected_call(cb)) {
       log_error(jfr)("Thread method sampler crashed");
     }
   } else {
+    // FIXME: Should have ThreadAccessContext.
     protected_task(context);
   }
 }
@@ -287,11 +294,11 @@ bool JfrThreadSampleClosure::sample_thread_in_native(JavaThread* thread, JfrStac
 
   JfrNativeSamplerCallback cb(*this, thread, frames, max_frames);
   if (JfrOptionSet::sample_protection()) {
-    ThreadCrashProtection crash_protection;
-    if (!crash_protection.call(cb)) {
+    if (!protected_call(cb)) {
       log_error(jfr)("Thread method sampler crashed for native");
     }
   } else {
+    // FIXME: Should have ThreadAccessContext.
     cb.call();
   }
   if (!cb.success()) {

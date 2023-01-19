@@ -25,6 +25,7 @@
 
 #include "precompiled.hpp"
 #include "runtime/javaThread.hpp"
+#include "runtime/threadAccessContext.hpp"
 #include "runtime/threadCritical.hpp"
 
 // put OS-includes here
@@ -39,6 +40,7 @@ static pthread_mutex_t       tc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int                   tc_count = 0;
 
 ThreadCritical::ThreadCritical() {
+  ThreadAccessContext::assert_not_active();
   pthread_t self = pthread_self();
   if (self != tc_owner) {
     int ret = pthread_mutex_lock(&tc_mutex);
