@@ -53,6 +53,7 @@ class ParkEvent;
 class ResourceArea;
 class SafeThreadsListPtr;
 class ThreadClosure;
+class ThreadCrashProtection;
 class ThreadsList;
 class ThreadsSMRSupport;
 
@@ -404,6 +405,18 @@ class Thread: public ThreadShadow {
     if (CheckUnhandledOops) unhandled_oops()->clear_unhandled_oops();
   }
 #endif // CHECK_UNHANDLED_OOPS
+
+ private:
+  ThreadCrashProtection* _crash_protection;
+
+ public:
+  ThreadCrashProtection* crash_protection() const {
+    return _crash_protection;
+  }
+
+  void set_crash_protection(ThreadCrashProtection* protection) {
+    _crash_protection = protection;
+  }
 
  public:
 #ifndef PRODUCT

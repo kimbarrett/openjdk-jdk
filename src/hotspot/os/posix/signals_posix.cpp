@@ -39,7 +39,6 @@
 #include "runtime/safefetch.hpp"
 #include "runtime/semaphore.inline.hpp"
 #include "runtime/suspendedThreadTask.hpp"
-#include "runtime/threadCrashProtection.hpp"
 #include "signals_posix.hpp"
 #include "suspendResume_posix.hpp"
 #include "utilities/events.hpp"
@@ -573,11 +572,6 @@ int JVM_HANDLE_XXX_SIGNAL(int sig, siginfo_t* info,
 
   ucontext_t* const uc = (ucontext_t*) ucVoid;
   Thread* const t = Thread::current_or_null_safe();
-
-  // Handle JFR thread crash protection.
-  //  Note: this may cause us to longjmp away. Do not use any code before this
-  //  point which really needs any form of epilogue code running, eg RAII objects.
-  ThreadCrashProtection::check_crash_protection(sig, t);
 
   bool signal_was_handled = false;
 

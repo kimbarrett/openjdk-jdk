@@ -25,59 +25,34 @@
 #include "precompiled.hpp"
 #include "runtime/thread.hpp"
 #include "runtime/threadCrashProtection.hpp"
+#include "utilities/debug.hpp"
 
-Thread* ThreadCrashProtection::_protected_thread = nullptr;
-ThreadCrashProtection* ThreadCrashProtection::_crash_protection = nullptr;
+#include <setjmp.h>
+#include <signal.h>
 
-ThreadCrashProtection::ThreadCrashProtection() {
-  _protected_thread = Thread::current();
-  assert(_protected_thread->is_JfrSampler_thread(), "should be JFRSampler");
-}
-
-/*
- * See the caveats for this class in threadCrashProtection_posix.hpp
- * Protects the callback call so that SIGSEGV / SIGBUS jumps back into this
- * method and returns false. If none of the signals are raised, returns true.
- * The callback is supposed to provide the method that should be protected.
- */
-bool ThreadCrashProtection::call(CrashProtectionCallback& cb) {
-  sigset_t saved_sig_mask;
-
-  // we cannot rely on sigsetjmp/siglongjmp to save/restore the signal mask
+// Protects the callback call so that VM errors cause a jump back into this
+// function to return false.  If no errors then returns true.
+bool ThreadCrashProtection::call_with_protection(Invoker invoker,
+                                                 void* callback,
+                                                 Thread* t) {
+  // We cannot rely on sigsetjmp/siglongjmp to save/restore the signal mask
   // since on at least some systems (OS X) siglongjmp will restore the mask
-  // for the process, not the thread
-  pthread_sigmask(0, nullptr, &saved_sig_mask);
-  if (sigsetjmp(_jmpbuf, 0) == 0) {
-    // make sure we can see in the signal handler that we have crash protection
-    // installed
-    _crash_protection = this;
-    cb.call();
-    // and clear the crash protection
-    _crash_protection = nullptr;
-    _protected_thread = nullptr;
+  // for the process, not the thread.  So instead we save and restore the
+  // signal mask manually and just use setjmp/longjmp.
+  sigset_t saved_sig_mask;
+  int psr = pthread_sigmask(0, nullptr, &saved_sig_mask);
+  assert_status(psr == 0, psr, "pthread_sigmask");
+  jmp_buf jmpbuf;
+  ThreadCrashProtection protection{t, &jmpbuf};
+  if (setjmp(jmpbuf) == 0) {
+    t->set_crash_protection(&protection); // Install now that jmpbuf initialized.
+    invoker(callback);
+    // Success.  Protection will be removed by destructor.
     return true;
-  }
-  // this happens when we siglongjmp() back
-  pthread_sigmask(SIG_SETMASK, &saved_sig_mask, nullptr);
-  _crash_protection = nullptr;
-  _protected_thread = nullptr;
-  return false;
-}
-
-void ThreadCrashProtection::restore() {
-  assert(_crash_protection != nullptr, "must have crash protection");
-  siglongjmp(_jmpbuf, 1);
-}
-
-void ThreadCrashProtection::check_crash_protection(int sig,
-    Thread* thread) {
-
-  if (thread != nullptr &&
-      thread == _protected_thread &&
-      _crash_protection != nullptr) {
-
-    if (sig == SIGSEGV || sig == SIGBUS) {
-      _crash_protection->restore();
-    }
+  } else {
+    // Exited call() via longjmp.  Protection was removed before unwind.
+    psr = pthread_sigmask(SIG_SETMASK, &saved_sig_mask, nullptr);
+    assert_status(psr == 0, psr, "pthread_sigmask");
+    return false;
   }
 }

@@ -26,30 +26,29 @@
 #include "runtime/thread.hpp"
 #include "runtime/threadCrashProtection.hpp"
 
-Thread* ThreadCrashProtection::_protected_thread = NULL;
-ThreadCrashProtection* ThreadCrashProtection::_crash_protection = NULL;
+#include <setjmp.h>
 
-ThreadCrashProtection::ThreadCrashProtection() {
-  _protected_thread = Thread::current();
-  assert(_protected_thread->is_JfrSampler_thread(), "should be JFRSampler");
-}
-
-// See the caveats for this class in os_windows.hpp
-// Protects the callback call so that raised OS EXCEPTIONS causes a jump back
-// into this method and returns false. If no OS EXCEPTION was raised, returns
-// true.
-// The callback is supposed to provide the method that should be protected.
-//
-bool ThreadCrashProtection::call(CrashProtectionCallback& cb) {
-  bool success = true;
+// Protects the callback call so that both raised OS exceptions and VM errors
+// cause a jump back into this function to return false. If neither occurs then
+// returns true.
+bool ThreadCrashProtection::call_with_protection(Invoker invoker,
+                                                 void* callback,
+                                                 Thread* t) {
+  jmp_buf jmpbuf;
+  ThreadCrashProtection protection{t, &jmpbuf};
   __try {
-    _crash_protection = this;
-    cb.call();
+    if (setjmp(jmpbuf) == 0) {
+      t->set_crash_protection(&protection); // Install now that jmpbuf initialized.
+      invoker(callback);
+      // Success.  Protection will be removed by destructor.
+      return true;
+    } else {
+      // Exited call() via longjmp.  Protection was removed before unwind.
+      return false;
+    }
   } __except(EXCEPTION_EXECUTE_HANDLER) {
-    // only for protection, nothing to do
-    success = false;
+    // Exited call() via structured exception handling.
+    // Protection will be removed by destructor.
+    return false;
   }
-  _crash_protection = NULL;
-  _protected_thread = NULL;
-  return success;
 }

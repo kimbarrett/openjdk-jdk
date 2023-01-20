@@ -147,23 +147,10 @@ class OSThreadSampler : public SuspendedThreadTask {
   JfrTicks _suspend_time;
 };
 
-class OSThreadSamplerCallback : public CrashProtectionCallback {
- public:
-  OSThreadSamplerCallback(OSThreadSampler& sampler, const SuspendedThreadTaskContext &context) :
-    _sampler(sampler), _context(context) {
-  }
-  virtual void call() {
-    _sampler.protected_task(_context);
-  }
- private:
-  OSThreadSampler& _sampler;
-  const SuspendedThreadTaskContext& _context;
-};
-
-static bool protected_call(CrashProtectionCallback& callback) {
+template<typename Callback>
+static bool protected_call(Callback callback) {
   ThreadAccessContext tac{};
-  ThreadCrashProtection crash_protection;
-  return crash_protection.call(callback);
+  return ThreadCrashProtection::call(callback);
 }
 
 void OSThreadSampler::do_task(const SuspendedThreadTaskContext& context) {
@@ -174,8 +161,7 @@ void OSThreadSampler::do_task(const SuspendedThreadTaskContext& context) {
   _suspend_time = JfrTicks::now();
 
   if (JfrOptionSet::sample_protection()) {
-    OSThreadSamplerCallback cb(*this, context);
-    if (!protected_call(cb)) {
+    if (!protected_call([&] { protected_task(context); })) {
       log_error(jfr)("Thread method sampler crashed");
     }
   } else {
@@ -216,12 +202,12 @@ void OSThreadSampler::take_sample() {
   run();
 }
 
-class JfrNativeSamplerCallback : public CrashProtectionCallback {
+class JfrNativeSamplerCallback {
  public:
   JfrNativeSamplerCallback(JfrThreadSampleClosure& closure, JavaThread* jt, JfrStackFrame* frames, u4 max_frames) :
     _closure(closure), _jt(jt), _thread_oop(jt->threadObj()), _stacktrace(frames, max_frames), _success(false) {
   }
-  virtual void call();
+  void call();
   bool success() { return _success; }
   JfrStackTrace& stacktrace() { return _stacktrace; }
 
@@ -294,7 +280,7 @@ bool JfrThreadSampleClosure::sample_thread_in_native(JavaThread* thread, JfrStac
 
   JfrNativeSamplerCallback cb(*this, thread, frames, max_frames);
   if (JfrOptionSet::sample_protection()) {
-    if (!protected_call(cb)) {
+    if (!protected_call([&] { cb.call(); })) {
       log_error(jfr)("Thread method sampler crashed for native");
     }
   } else {

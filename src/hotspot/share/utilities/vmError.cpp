@@ -49,6 +49,7 @@
 #include "runtime/safefetch.hpp"
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/stackFrameStream.inline.hpp"
+#include "runtime/threadCrashProtection.hpp"
 #include "runtime/threads.hpp"
 #include "runtime/threadSMR.hpp"
 #include "runtime/vmThread.hpp"
@@ -1409,6 +1410,9 @@ void VMError::report_and_maybe_die(AfterReportAction after_report_action,
 
   // File descriptor to the error log file.
   static int fd_log = -1;
+
+  // Rather than procede with the "crash", abort the protected call.
+  ThreadCrashProtection::unwind_if_protected();
 
 #ifdef CAN_SHOW_REGISTERS_ON_ASSERT
   // Disarm assertion poison page, since from this point on we do not need this mechanism anymore and it may
