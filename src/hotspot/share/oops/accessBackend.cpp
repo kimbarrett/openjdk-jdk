@@ -28,6 +28,7 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/javaThread.inline.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/threadCrashProtection.hpp"
 #include "runtime/vm_version.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/debug.hpp"
@@ -209,7 +210,7 @@ namespace AccessInternal {
 
 #ifdef ASSERT
   void check_access_thread_state() {
-    if (VMError::is_error_reported() || Debugging) {
+    if (VMError::is_error_reported() || ThreadCrashProtection::is_protected()) {
       return;
     }
 

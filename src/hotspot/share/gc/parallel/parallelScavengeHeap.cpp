@@ -50,6 +50,7 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/java.hpp"
+#include "runtime/threadCrashProtection.hpp"
 #include "runtime/vmThread.hpp"
 #include "services/memoryManager.hpp"
 #include "services/memTracker.hpp"
@@ -628,14 +629,16 @@ HeapWord* ParallelScavengeHeap::block_start(const void* addr) const {
     assert(young_gen()->is_in(addr),
            "addr should be in allocated part of young gen");
     // called from os::print_location by find or VMError
-    if (Debugging || VMError::is_error_reported())  return nullptr;
+    if (ThreadCrashProtection::is_protected() || VMError::is_error_reported()) {
+      return nullptr;
+    }
     Unimplemented();
   } else if (old_gen()->is_in_reserved(addr)) {
     assert(old_gen()->is_in(addr),
            "addr should be in allocated part of old gen");
     return old_gen()->start_array()->object_start((HeapWord*)addr);
   }
-  return 0;
+  return nullptr;
 }
 
 bool ParallelScavengeHeap::block_is_obj(const HeapWord* addr) const {

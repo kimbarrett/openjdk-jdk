@@ -50,6 +50,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubCodeGenerator.hpp"
 #include "runtime/stubRoutines.hpp"
+#include "runtime/threadCrashProtection.hpp"
 #include "runtime/threads.hpp"
 #include "runtime/vframe.hpp"
 #include "runtime/vm_version.hpp"
@@ -65,8 +66,10 @@
 #include "utilities/unsigned5.hpp"
 #include "utilities/vmError.hpp"
 
+#include <new>
 #include <stdio.h>
 #include <stdarg.h>
+#include <type_traits>
 
 // Support for showing register content on asserts/guarantees.
 #ifdef CAN_SHOW_REGISTERS_ON_ASSERT
@@ -75,9 +78,6 @@ char* g_assert_poison = &g_dummy;
 static intx g_asserting_thread = 0;
 static void* g_assertion_context = nullptr;
 #endif // CAN_SHOW_REGISTERS_ON_ASSERT
-
-// Set to suppress secondary error reporting.
-bool Debugging = false;
 
 #ifndef ASSERT
 #  ifdef _DEBUG
@@ -166,7 +166,7 @@ static void print_error_for_unit_test(const char* message, const char* detail_fm
 
 void report_vm_error(const char* file, int line, const char* error_msg, const char* detail_fmt, ...)
 {
-  if (Debugging) return;
+  ThreadCrashProtection::unwind_if_protected();
   va_list detail_args;
   va_start(detail_args, detail_fmt);
   void* context = nullptr;
@@ -188,7 +188,7 @@ void report_vm_status_error(const char* file, int line, const char* error_msg,
 }
 
 void report_fatal(VMErrorType error_type, const char* file, int line, const char* detail_fmt, ...) {
-  if (Debugging) return;
+  ThreadCrashProtection::unwind_if_protected();
   va_list detail_args;
   va_start(detail_args, detail_fmt);
   void* context = nullptr;
@@ -208,7 +208,7 @@ void report_fatal(VMErrorType error_type, const char* file, int line, const char
 
 void report_vm_out_of_memory(const char* file, int line, size_t size,
                              VMErrorType vm_err_type, const char* detail_fmt, ...) {
-  if (Debugging) return;
+  ThreadCrashProtection::unwind_if_protected();
   va_list detail_args;
   va_start(detail_args, detail_fmt);
 
@@ -270,137 +270,156 @@ void report_java_out_of_memory(const char* message) {
 
 // All debug entries should be wrapped with a stack allocated
 // Command object. It makes sure a resource mark is set and
-// flushes the logfile to prevent file sharing problems.
+// flushes the logfile to prevent file sharing problems.  It also uses
+// ThreadCrashProtection to invoke the associated handler.
 
 class Command : public StackObj {
- private:
-  ResourceMark rm;
-  bool debug_save;
- public:
-  static int level;
-  Command(const char* str) {
-    debug_save = Debugging;
-    Debugging = true;
-    if (level++ > 0)  return;
-    tty->cr();
-    tty->print_cr("\"Executing %s\"", str);
-  }
+  const char* _name;
 
-  ~Command() {
+public:
+  Command(const char* name) : _name(name) {}
+
+  template<typename F>
+  void call(F f) {
+    tty->cr();
+    tty->print_cr("\"Executing %s\"", _name);
+    ResourceMark rm;
+    if (!ThreadCrashProtection::call(f)) {
+      tty->cr();
+      tty->print_cr("\" *** ABORTED COMMAND %s\"", _name);
+    }
     tty->flush();
-    Debugging = debug_save;
-    level--;
   }
 };
 
-int Command::level = 0;
 
 extern "C" JNIEXPORT void blob(CodeBlob* cb) {
-  Command c("blob");
-  cb->print();
+  Command{"blob"}.call([&] { cb->print(); });
 }
 
 
 extern "C" JNIEXPORT void dump_vtable(address p) {
-  Command c("dump_vtable");
-  Klass* k = (Klass*)p;
-  k->vtable().print();
+  auto handler = [&] {
+    Klass* k = (Klass*)p;
+    k->vtable().print();
+  };
+  Command{"dump_vtable"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void nm(intptr_t p) {
   // Actually we look through all CodeBlobs (the nm name has been kept for backwards compatibility)
-  Command c("nm");
-  CodeBlob* cb = CodeCache::find_blob((address)p);
-  if (cb == nullptr) {
-    tty->print_cr("null");
-  } else {
-    cb->print();
-  }
+  auto handler = [&] {
+    CodeBlob* cb = CodeCache::find_blob((address)p);
+    if (cb == nullptr) {
+      tty->print_cr("null");
+    } else {
+      cb->print();
+    }
+  };
+  Command{"nm"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void disnm(intptr_t p) {
-  Command c("disnm");
-  CodeBlob* cb = CodeCache::find_blob((address) p);
-  if (cb != nullptr) {
-    nmethod* nm = cb->as_nmethod_or_null();
-    if (nm != nullptr) {
-      nm->print();
-    } else {
-      cb->print();
+  auto handler = [&] {
+    CodeBlob* cb = CodeCache::find_blob((address) p);
+    if (cb != nullptr) {
+      nmethod* nm = cb->as_nmethod_or_null();
+      if (nm != nullptr) {
+        nm->print();
+      } else {
+        cb->print();
+      }
+      Disassembler::decode(cb);
     }
-    Disassembler::decode(cb);
-  }
+  };
+  Command{"disnm"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void printnm(intptr_t p) {
   char buffer[256];
   os::snprintf_checked(buffer, sizeof(buffer), "printnm: " INTPTR_FORMAT, p);
-  Command c(buffer);
-  CodeBlob* cb = CodeCache::find_blob((address) p);
-  if (cb != nullptr && cb->is_nmethod()) {
-    nmethod* nm = (nmethod*)cb;
-    nm->print_nmethod(true);
-  } else {
-    tty->print_cr("Invalid address");
-  }
+  auto handler = [&] {
+    CodeBlob* cb = CodeCache::find_blob((address) p);
+    if (cb != nullptr && cb->is_nmethod()) {
+      nmethod* nm = (nmethod*)cb;
+      nm->print_nmethod(true);
+    } else {
+      tty->print_cr("Invalid address");
+    }
+  };
+  Command{buffer}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void universe() {
-  Command c("universe");
-  Universe::print_on(tty);
+  Command{"universe"}.call([&] { Universe::print_on(tty); });
 }
 
 
+// FIXME
 extern "C" JNIEXPORT void verify() {
-  // try to run a verify on the entire system
-  // note: this may not be safe if we're not at a safepoint; for debugging,
-  // this manipulates the safepoint settings to avoid assertion failures
-  Command c("universe verify");
-  bool safe = SafepointSynchronize::is_at_safepoint();
-  if (!safe) {
-    tty->print_cr("warning: not at safepoint -- verify may fail");
-    SafepointSynchronize::set_is_at_safepoint();
-  }
-  // Ensure Eden top is correct before verification
-  Universe::heap()->prepare_for_verify();
-  Universe::verify();
-  if (!safe) SafepointSynchronize::set_is_not_at_safepoint();
+  // Try to run a verify on the entire system.  Note: This may not be safe if
+  // we're not at a safepoint. For debugging, this manipulates the safepoint
+  // settings to avoid assertion failures.  The safepoint state manipulation
+  // is performed outside the command in case the command fails and unwinds
+  // (without executing intervening destructors).
+  struct ForceSafepointState {
+    bool _old_state;
+    ForceSafepointState() : _old_state(SafepointSynchronize::is_at_safepoint()) {}
+    ~ForceSafepointState() {
+      if (!_old_state) SafepointSynchronize::set_is_not_at_safepoint();
+    }
+    void force_at_safepoint() {
+      if (!_old_state) {
+        tty->print_cr("warning: not at safepoint -- verify may fail");
+        SafepointSynchronize::set_is_at_safepoint();
+      }
+    }
+  } state{};
+  auto handler = [&] {
+    state.force_at_safepoint();
+    // Ensure Eden top is correct before verification
+    Universe::heap()->prepare_for_verify();
+    Universe::verify();
+  };
+  Command{"universe verify"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void pp(void* p) {
-  Command c("pp");
-  FlagSetting fl(DisplayVMOutput, true);
-  if (p == nullptr) {
-    tty->print_cr("null");
-    return;
-  }
-  if (Universe::heap()->is_in(p)) {
-    oop obj = cast_to_oop(p);
-    obj->print();
-  } else {
-    // Ask NMT about this pointer.
-    // GDB note: We will be using SafeFetch to access the supposed malloc header. If the address is
-    // not readable, this will generate a signal. That signal will trip up the debugger: gdb will
-    // catch the signal and disable the pp() command for further use.
-    // In order to avoid that, switch off SIGSEGV handling with "handle SIGSEGV nostop" before
-    // invoking pp()
-    if (MemTracker::enabled()) {
-      // Does it point into a known mmapped region?
-      if (VirtualMemoryTracker::print_containing_region(p, tty)) {
-        return;
-      }
-      // Does it look like the start of a malloced block?
-      if (MallocTracker::print_pointer_information(p, tty)) {
-        return;
-      }
+  auto handler = [&] {
+    if (p == nullptr) {
+      tty->print_cr("null");
+      return;
     }
-    tty->print_cr(PTR_FORMAT, p2i(p));
-  }
+    if (Universe::heap()->is_in(p)) {
+      oop obj = cast_to_oop(p);
+      obj->print();
+    } else {
+      // Ask NMT about this pointer.
+      // GDB note: We will be using SafeFetch to access the supposed malloc header. If the address is
+      // not readable, this will generate a signal. That signal will trip up the debugger: gdb will
+      // catch the signal and disable the pp() command for further use.
+      // In order to avoid that, switch off SIGSEGV handling with "handle SIGSEGV nostop" before
+      // invoking pp()
+      if (MemTracker::enabled()) {
+        // Does it point into a known mmapped region?
+        if (VirtualMemoryTracker::print_containing_region(p, tty)) {
+          return;
+        }
+        // Does it look like the start of a malloced block?
+        if (MallocTracker::print_pointer_information(p, tty)) {
+          return;
+        }
+      }
+      tty->print_cr(PTR_FORMAT, p2i(p));
+    }
+  };
+  FlagSetting fl(DisplayVMOutput, true);
+  Command{"pp"}.call(handler);
 }
 
 
@@ -408,48 +427,50 @@ extern "C" JNIEXPORT void findpc(intptr_t x);
 
 extern "C" JNIEXPORT void ps() { // print stack
   if (Thread::current_or_null() == nullptr) return;
-  Command c("ps");
-
   // Prints the stack of the current Java thread
-  JavaThread* p = JavaThread::active();
-  tty->print(" for thread: ");
-  p->print();
-  tty->cr();
+  auto handler = [&] {
+    JavaThread* p = JavaThread::active();
+    tty->print(" for thread: ");
+    p->print();
+    tty->cr();
 
-  if (p->has_last_Java_frame()) {
-    // If the last_Java_fp is set we are in C land and
-    // can call the standard stack_trace function.
-    p->print_stack();
+    if (p->has_last_Java_frame()) {
+      // If the last_Java_fp is set we are in C land and
+      // can call the standard stack_trace function.
+      p->print_stack();
 #ifndef PRODUCT
-    if (Verbose) p->trace_stack();
-  } else {
-    frame f = os::current_frame();
-    RegisterMap reg_map(p,
-                        RegisterMap::UpdateMap::include,
-                        RegisterMap::ProcessFrames::include,
-                        RegisterMap::WalkContinuation::skip);
-    f = f.sender(&reg_map);
-    tty->print("(guessing starting frame id=" PTR_FORMAT " based on current fp)\n", p2i(f.id()));
-    p->trace_stack_from(vframe::new_vframe(&f, &reg_map, p));
+      if (Verbose) p->trace_stack();
+    } else {
+      frame f = os::current_frame();
+      RegisterMap reg_map(p,
+                          RegisterMap::UpdateMap::include,
+                          RegisterMap::ProcessFrames::include,
+                          RegisterMap::WalkContinuation::skip);
+      f = f.sender(&reg_map);
+      tty->print("(guessing starting frame id=" PTR_FORMAT " based on current fp)\n", p2i(f.id()));
+      p->trace_stack_from(vframe::new_vframe(&f, &reg_map, p));
 #endif
-  }
+    }
+  };
+  Command{"ps"}.call(handler);
 }
 
 extern "C" JNIEXPORT void pfl() {
   // print frame layout
-  Command c("pfl");
-  JavaThread* p = JavaThread::active();
-  tty->print(" for thread: ");
-  p->print();
-  tty->cr();
-  if (p->has_last_Java_frame()) {
-    p->print_frame_layout();
-  }
+  auto handler = [&] {
+    JavaThread* p = JavaThread::active();
+    tty->print(" for thread: ");
+    p->print();
+    tty->cr();
+    if (p->has_last_Java_frame()) {
+      p->print_frame_layout();
+    }
+  };
+  Command{"pfl"}.call(handler);
 }
 
 extern "C" JNIEXPORT void psf() { // print stack frames
-  {
-    Command c("psf");
+  auto handler = [&] {
     JavaThread* p = JavaThread::active();
     tty->print(" for thread: ");
     p->print();
@@ -457,78 +478,85 @@ extern "C" JNIEXPORT void psf() { // print stack frames
     if (p->has_last_Java_frame()) {
       p->trace_frames();
     }
-  }
+  };
+  Command{"psf"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void threads() {
-  Command c("threads");
-  Threads::print(false, true);
+  Command{"threads"}.call([&] { Threads::print(false, true); });
 }
 
 
 extern "C" JNIEXPORT void psd() {
-  Command c("psd");
-  SystemDictionary::print();
+  Command{"psd"}.call([&] { SystemDictionary::print(); });
 }
 
 
 extern "C" JNIEXPORT void pss() { // print all stacks
   if (Thread::current_or_null() == nullptr) return;
-  Command c("pss");
-  Threads::print(true, PRODUCT_ONLY(false) NOT_PRODUCT(true));
+  auto handler = [&] {
+    Threads::print(true, PRODUCT_ONLY(false) NOT_PRODUCT(true));
+  };
+  Command{"pss"}.call(handler);
 }
 
 // #ifndef PRODUCT
 
 extern "C" JNIEXPORT void debug() {               // to set things up for compiler debugging
-  Command c("debug");
-  NOT_PRODUCT(WizardMode = true;)
-  PrintCompilation = true;
-  PrintInlining = PrintAssembly = true;
-  tty->flush();
+  auto handler = [&] {
+    NOT_PRODUCT(WizardMode = true;)
+    PrintCompilation = true;
+    PrintInlining = PrintAssembly = true;
+    tty->flush();
+  };
+  Command{"debug"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void ndebug() {              // undo debug()
-  Command c("ndebug");
-  PrintCompilation = false;
-  PrintInlining = PrintAssembly = false;
-  tty->flush();
+  auto handler = [&] {
+    PrintCompilation = false;
+    PrintInlining = PrintAssembly = false;
+    tty->flush();
+  };
+  Command{"ndebug"}.call(handler);
 }
 
 
 extern "C" JNIEXPORT void flush()  {
-  Command c("flush");
-  tty->flush();
+  Command{"flush"}.call([&] { tty->flush(); });
 }
 
 extern "C" JNIEXPORT void events() {
-  Command c("events");
-  Events::print();
+  Command{"events"}.call(&Events::print);
 }
 
 extern "C" JNIEXPORT Method* findm(intptr_t pc) {
-  Command c("findm");
-  nmethod* nm = CodeCache::find_nmethod((address)pc);
-  return (nm == nullptr) ? (Method*)nullptr : nm->method();
+  Method* result = nullptr;
+  auto handler = [&] {
+    nmethod* nm = CodeCache::find_nmethod((address)pc);
+    result = (nm == nullptr) ? (Method*)nullptr : nm->method();
+  };
+  Command{"findm"}.call(handler);
+  return result;
 }
 
 
 extern "C" JNIEXPORT nmethod* findnm(intptr_t addr) {
-  Command c("findnm");
-  return  CodeCache::find_nmethod((address)addr);
+  nmethod* result = nullptr;
+  auto handler = [&] { result = CodeCache::find_nmethod((address)addr); };
+  Command{"findnm"}.call(handler);
+  return result;
 }
 
 extern "C" JNIEXPORT void find(intptr_t x) {
-  Command c("find");
-  os::print_location(tty, x, false);
+  Command{"find"}.call([&] { os::print_location(tty, x, false); });
 }
 
 
 extern "C" JNIEXPORT void findpc(intptr_t x) {
-  Command c("findpc");
-  os::print_location(tty, x, true);
+  Command{"findpc"}.call([&] { os::print_location(tty, x, true); });
 }
 
 // For findmethod() and findclass():
@@ -541,38 +569,47 @@ extern "C" JNIEXPORT void findpc(intptr_t x) {
 //   call findmethod("*ang/Object*", "wait", 0xff)       -> detailed disasm of all "wait" methods in j.l.Object
 //   call findmethod("*ang/Object*", "wait:(*J*)V", 0x1) -> list all "wait" methods in j.l.Object that have a long parameter
 extern "C" JNIEXPORT void findclass(const char* class_name_pattern, int flags) {
-  Command c("findclass");
-  ClassPrinter::print_flags_help(tty);
-  ClassPrinter::print_classes(class_name_pattern, flags, tty);
+  auto handler = [&] {
+    ClassPrinter::print_flags_help(tty);
+    ClassPrinter::print_classes(class_name_pattern, flags, tty);
+  };
+  Command{"findclass"}.call(handler);
 }
 
 extern "C" JNIEXPORT void findmethod(const char* class_name_pattern,
                                      const char* method_pattern, int flags) {
-  Command c("findmethod");
-  ClassPrinter::print_flags_help(tty);
-  ClassPrinter::print_methods(class_name_pattern, method_pattern, flags, tty);
+  auto handler = [&] {
+    ClassPrinter::print_flags_help(tty);
+    ClassPrinter::print_methods(class_name_pattern, method_pattern, flags, tty);
+  };
+  Command{"findmethod"}.call(handler);
 }
 
 // Need method pointer to find bcp
 extern "C" JNIEXPORT void findbcp(intptr_t method, intptr_t bcp) {
-  Command c("findbcp");
-  Method* mh = (Method*)method;
-  if (!mh->is_native()) {
-    tty->print_cr("bci_from(%p) = %d; print_codes():",
-                        mh, mh->bci_from(address(bcp)));
-    mh->print_codes_on(tty);
-  }
+  auto handler = [&] {
+    Method* mh = (Method*)method;
+    if (!mh->is_native()) {
+      tty->print_cr("bci_from(%p) = %d; print_codes():",
+                    mh, mh->bci_from(address(bcp)));
+      mh->print_codes_on(tty);
+    }
+  };
+  Command{"findbcp"}.call(handler);
 }
 
 // check and decode a single u5 value
 extern "C" JNIEXPORT u4 u5decode(intptr_t addr) {
-  Command c("u5decode");
-  u1* arr = (u1*)addr;
-  size_t off = 0, lim = 5;
-  if (!UNSIGNED5::check_length(arr, off, lim)) {
-    return 0;
-  }
-  return UNSIGNED5::read_uint(arr, off, lim);
+  u4 result = 0;
+  auto handler = [&] {
+    u1* arr = (u1*)addr;
+    size_t off = 0, lim = 5;
+    if (UNSIGNED5::check_length(arr, off, lim)) {
+      result = UNSIGNED5::read_uint(arr, off, lim);
+    }
+  };
+  Command{"u5decode"}.call(handler);
+  return result;
 }
 
 // Sets up a Reader from addr/limit and prints count items.
@@ -585,13 +622,17 @@ extern "C" JNIEXPORT u4 u5decode(intptr_t addr) {
 extern "C" JNIEXPORT intptr_t u5p(intptr_t addr,
                                   intptr_t limit,
                                   int count) {
-  Command c("u5p");
-  u1* arr = (u1*)addr;
-  if (limit && limit < addr)  limit = addr;
-  size_t lim = !limit ? 0 : (limit - addr);
-  size_t endpos = UNSIGNED5::print_count(count > 0 ? count : -1,
-                                         arr, (size_t)0, lim);
-  return addr + endpos;
+  intptr_t result = 0;
+  auto handler = [&] {
+    u1* arr = (u1*)addr;
+    if (limit && limit < addr)  limit = addr;
+    size_t lim = !limit ? 0 : (limit - addr);
+    size_t endpos = UNSIGNED5::print_count(count > 0 ? count : -1,
+                                           arr, (size_t)0, lim);
+    result = addr + endpos;
+  };
+  Command{"u5p"}.call(handler);
+  return result;
 }
 
 
@@ -601,44 +642,48 @@ void pp(intptr_t p)          { pp((void*)p); }
 void pp(oop p)               { pp((void*)p); }
 
 void help() {
-  Command c("help");
-  tty->print_cr("basic");
-  tty->print_cr("  pp(void* p)   - try to make sense of p");
-  tty->print_cr("  ps()          - print current thread stack");
-  tty->print_cr("  pss()         - print all thread stacks");
-  tty->print_cr("  pm(int pc)    - print Method* given compiled PC");
-  tty->print_cr("  findm(intptr_t pc) - finds Method*");
-  tty->print_cr("  find(intptr_t x)   - finds & prints nmethod/stub/bytecode/oop based on pointer into it");
-  tty->print_cr("  pns(void* sp, void* fp, void* pc)  - print native (i.e. mixed) stack trace. E.g.");
-  tty->print_cr("                   pns($sp, $rbp, $pc) on Linux/amd64 or");
-  tty->print_cr("                   pns($sp, $ebp, $pc) on Linux/x86 or");
-  tty->print_cr("                   pns($sp, $fp, $pc)  on Linux/AArch64 or");
-  tty->print_cr("                   pns($sp, 0, $pc)    on Linux/ppc64 or");
-  tty->print_cr("                   pns($sp, $s8, $pc)  on Linux/mips or");
-  tty->print_cr("                 - in gdb do 'set overload-resolution off' before calling pns()");
-  tty->print_cr("                 - in dbx do 'frame 1' before calling pns()");
-  tty->print_cr("class metadata.");
-  tty->print_cr("  findclass(name_pattern, flags)");
-  tty->print_cr("  findmethod(class_name_pattern, method_pattern, flags)");
+  auto handler = [&] {
+    tty->print_cr("basic");
+    tty->print_cr("  pp(void* p)   - try to make sense of p");
+    tty->print_cr("  ps()          - print current thread stack");
+    tty->print_cr("  pss()         - print all thread stacks");
+    tty->print_cr("  pm(int pc)    - print Method* given compiled PC");
+    tty->print_cr("  findm(intptr_t pc) - finds Method*");
+    tty->print_cr("  find(intptr_t x)   - finds & prints nmethod/stub/bytecode/oop based on pointer into it");
+    tty->print_cr("  pns(void* sp, void* fp, void* pc)  - print native (i.e. mixed) stack trace. E.g.");
+    tty->print_cr("                   pns($sp, $rbp, $pc) on Linux/amd64 or");
+    tty->print_cr("                   pns($sp, $ebp, $pc) on Linux/x86 or");
+    tty->print_cr("                   pns($sp, $fp, $pc)  on Linux/AArch64 or");
+    tty->print_cr("                   pns($sp, 0, $pc)    on Linux/ppc64 or");
+    tty->print_cr("                   pns($sp, $s8, $pc)  on Linux/mips or");
+    tty->print_cr("                 - in gdb do 'set overload-resolution off' before calling pns()");
+    tty->print_cr("                 - in dbx do 'frame 1' before calling pns()");
+    tty->print_cr("class metadata.");
+    tty->print_cr("  findclass(name_pattern, flags)");
+    tty->print_cr("  findmethod(class_name_pattern, method_pattern, flags)");
 
-  tty->print_cr("misc.");
-  tty->print_cr("  flush()       - flushes the log file");
-  tty->print_cr("  events()      - dump events from ring buffers");
+    tty->print_cr("misc.");
+    tty->print_cr("  flush()       - flushes the log file");
+    tty->print_cr("  events()      - dump events from ring buffers");
 
 
-  tty->print_cr("compiler debugging");
-  tty->print_cr("  debug()       - to set things up for compiler debugging");
-  tty->print_cr("  ndebug()      - undo debug");
+    tty->print_cr("compiler debugging");
+    tty->print_cr("  debug()       - to set things up for compiler debugging");
+    tty->print_cr("  ndebug()      - undo debug");
+  };
+  Command{"help"}.call(handler);
 }
 
 #ifndef PRODUCT
 extern "C" JNIEXPORT void pns(void* sp, void* fp, void* pc) { // print native stack
-  Command c("pns");
   static char buf[O_BUFLEN];
-  Thread* t = Thread::current_or_null();
-  // Call generic frame constructor (certain arguments may be ignored)
-  frame fr(sp, fp, pc);
-  VMError::print_native_stack(tty, fr, t, false, -1, buf, sizeof(buf));
+  auto handler = [&] {
+    Thread* t = Thread::current_or_null();
+    // Call generic frame constructor (certain arguments may be ignored)
+    frame fr(sp, fp, pc);
+    VMError::print_native_stack(tty, fr, t, false, -1, buf, sizeof(buf));
+  };
+  Command{"pns"}.call(handler);
 }
 
 //
@@ -650,16 +695,18 @@ extern "C" JNIEXPORT void pns(void* sp, void* fp, void* pc) { // print native st
 // pns2() in committed source (product or debug).
 //
 extern "C" JNIEXPORT void pns2() { // print native stack
-  Command c("pns2");
   static char buf[O_BUFLEN];
-  if (os::platform_print_native_stack(tty, nullptr, buf, sizeof(buf))) {
-    // We have printed the native stack in platform-specific code,
-    // so nothing else to do in this case.
-  } else {
-    Thread* t = Thread::current_or_null();
-    frame fr = os::current_frame();
-    VMError::print_native_stack(tty, fr, t, false, -1, buf, sizeof(buf));
-  }
+  auto handler = [&] {
+    if (os::platform_print_native_stack(tty, nullptr, buf, sizeof(buf))) {
+      // We have printed the native stack in platform-specific code,
+      // so nothing else to do in this case.
+    } else {
+      Thread* t = Thread::current_or_null();
+      frame fr = os::current_frame();
+      VMError::print_native_stack(tty, fr, t, false, -1, buf, sizeof(buf));
+    }
+  };
+  Command{"pns2"}.call(handler);
 }
 #endif
 

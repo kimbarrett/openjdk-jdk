@@ -549,6 +549,11 @@ private:
   void push_set(XMMRegSet set, int offset);
   void pop_set(XMMRegSet set, int offset);
 
+  // Helpers for print_state32/64, doing the actual printing in the context
+  // set up by the corresponding public function.
+  static void print_state32_impl(int rdi, int rsi, int rbp, int rsp, int rbx, int rdx, int rcx, int rax, int eip);
+  static void print_state64_impl(int64_t pc, int64_t regs[]);
+
 public:
   void push_set(RegSet set, int offset = -1);
   void pop_set(RegSet set, int offset = -1);

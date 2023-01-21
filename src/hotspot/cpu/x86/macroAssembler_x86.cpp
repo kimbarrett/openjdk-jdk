@@ -52,6 +52,7 @@
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
+#include "runtime/threadCrashProtection.hpp"
 #include "utilities/macros.hpp"
 
 #ifdef PRODUCT
@@ -402,8 +403,14 @@ void MacroAssembler::debug32(int rdi, int rsi, int rbp, int rsp, int rbx, int rd
 }
 
 void MacroAssembler::print_state32(int rdi, int rsi, int rbp, int rsp, int rbx, int rdx, int rcx, int rax, int eip) {
+  auto handler = [&] { print_state32_impl( rdi, rsi, rbp, rsp, rbx, rdx, rcx, rax, eip); };
   ttyLocker ttyl;
-  FlagSetting fs(Debugging, true);
+  if (!ThreadCrashProtection::call(handler)) {
+    tty->print_cr(" *** PRINTING ABORTED");
+  }
+}
+
+void MacroAssembler::print_state32_impl(int rdi, int rsi, int rbp, int rsp, int rbx, int rdx, int rcx, int rax, int eip) {
   tty->print_cr("eip = 0x%08x", eip);
 #ifndef PRODUCT
   if ((WizardMode || Verbose) && PrintMiscellaneous) {
@@ -831,8 +838,14 @@ void MacroAssembler::debug64(char* msg, int64_t pc, int64_t regs[]) {
 }
 
 void MacroAssembler::print_state64(int64_t pc, int64_t regs[]) {
+  auto handler = [&] { print_state64_impl(pc, regs); };
   ttyLocker ttyl;
-  FlagSetting fs(Debugging, true);
+  if (!ThreadCrashProtection::call(handler)) {
+    tty->print_cr(" *** PRINTING ABORTED");
+  }
+}
+
+void MacroAssembler::print_state64_impl(int64_t pc, int64_t regs[]) {
   tty->print_cr("rip = 0x%016lx", (intptr_t)pc);
 #ifndef PRODUCT
   tty->cr();
