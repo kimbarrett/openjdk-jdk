@@ -359,7 +359,6 @@ extern "C" JNIEXPORT void universe() {
 }
 
 
-// FIXME
 extern "C" JNIEXPORT void verify() {
   // Try to run a verify on the entire system.  Note: This may not be safe if
   // we're not at a safepoint. For debugging, this manipulates the safepoint
@@ -529,6 +528,10 @@ extern "C" JNIEXPORT void flush()  {
 }
 
 extern "C" JNIEXPORT void events() {
+  // Grab the tty lock around event printing, because event printing is
+  // performed while holding the (event-ranked) mutex for each event log.
+  // By grabbing it out here we avoid rank-inversion failures from that.
+  ttyLocker ttyl;
   Command{"events"}.call(&Events::print);
 }
 
