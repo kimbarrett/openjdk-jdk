@@ -95,8 +95,7 @@ public:
   // Check and adjust debug-only nesting level.
   void deactivate_state(const SavedState& state) {
     assert(_nesting > state._nesting, "deactivating inactive mark");
-    assert((_nesting - state._nesting) == 1, "deactivating across another mark");
-    DEBUG_ONLY(--_nesting;)
+    DEBUG_ONLY(_nesting = state._nesting;)
   }
 
   // Roll back the allocation state to the indicated state values.
