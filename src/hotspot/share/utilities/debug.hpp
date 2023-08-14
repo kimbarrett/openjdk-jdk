@@ -30,6 +30,7 @@
 #include "utilities/compilerWarnings.hpp"
 #include "utilities/macros.hpp"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -256,6 +257,10 @@ enum VMErrorType : unsigned int {
 // error reporting helper functions
 ATTRIBUTE_NORETURN
 void report_vm_error(const char* file, int line, const char* error_msg);
+
+ATTRIBUTE_NORETURN
+void report_vm_error(const char* file, int line, const char* error_msg,
+                     const char* detail_fmt, va_list detail_args);
 
 ATTRIBUTE_NORETURN
 ATTRIBUTE_PRINTF(4, 5)

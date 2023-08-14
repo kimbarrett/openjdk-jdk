@@ -29,6 +29,7 @@
 #include "utilities/compilerWarnings.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/sourceLocation.hpp"
 
 // Get constants like JVM_T_CHAR and JVM_SIGNATURE_INT, before pulling in <jvm.h>.
 #include "classfile_constants.h"
@@ -491,18 +492,85 @@ inline size_t pointer_delta(const MetaWord* left, const MetaWord* right) {
 #define CAST_TO_FN_PTR(func_type, value) (reinterpret_cast<func_type>(value))
 #define CAST_FROM_FN_PTR(new_type, func_ptr) ((new_type)((uintptr_t)(func_ptr)))
 
-// In many places we've added C-style casts to silence compiler
-// warnings, for example when truncating a size_t to an int when we
-// know the size_t is a small struct. Such casts are risky because
-// they effectively disable useful compiler warnings. We can make our
-// lives safer with this function, which ensures that any cast is
-// reversible without loss of information. It doesn't check
-// everything: it isn't intended to make sure that pointer types are
-// compatible, for example.
-template <typename T2, typename T1>
-constexpr T2 checked_cast(T1 thing) {
-  T2 result = static_cast<T2>(thing);
-  assert(static_cast<T1>(result) == thing, "must be");
+// check_cast<To>(From) provides (debug-only) checked conversions from
+// integral/float/enum types to integral/enum types.  The check verifies there
+// is no loss of information by the conversion.  This provides an added
+// measure of safety compared to using bare casts (either C-style or C++
+// style).  A common use-case is to silence gcc -Wconversion warnings in
+// places where we believe no loss of information can happen, while providing
+// debug-time verification of that belief.
+
+class CheckedCastFailureReporting {
+  // Metafunction for computing the maximally widened type that can hold all
+  // possible values for the type T.  This is used to reduce the set of types
+  // involved in reporting to a small and fixed number.
+  template<typename T, typename Enabled = void> struct CanonicalType;
+
+  // formatter arguments are from, to.  The returned format string must agree
+  // with the types of the arguments passed to report_impl.
+  static const char* formatter(intmax_t, intmax_t) { return "%jd => %jd"; }
+  static const char* formatter(uintmax_t, uintmax_t) { return "%ju => %ju"; }
+  static const char* formatter(intmax_t, uintmax_t) { return "%jd => %ju"; }
+  static const char* formatter(uintmax_t, intmax_t) { return "%ju => %jd"; }
+
+  static const char* formatter(double, intmax_t) { return "%g => %jd"; }
+  static const char* formatter(double, uintmax_t) { return "%g => %ju"; }
+
+  ATTRIBUTE_NORETURN
+  static void report_impl(const SourceLocation& location, const char* format, ...);
+
+public:
+  template<typename FromType, typename ToType>
+  ATTRIBUTE_NORETURN
+  static void report(FromType from, ToType to, const SourceLocation& location) {
+    // Convert "from" and "to" to equivalent values in the widest types
+    // corresponding to their original types.  This reduces the number of
+    // cases we need to cover with the formatter to something known and not
+    // too large.
+    using CFromType = typename CanonicalType<FromType>::type;
+    using CToType = typename CanonicalType<ToType>::type;
+    CFromType cfrom = static_cast<CFromType>(from);
+    CToType cto = static_cast<CToType>(to);
+    // Type erasure of the cfrom/cto arguments via variadic args.  The
+    // formatter string provides the type information to the callee.
+    report_impl(location, formatter(cfrom, cto), cfrom, cto);
+  }
+};
+
+// Integral types canonicalize to [u]intmax_t.
+template<typename T>
+struct CheckedCastFailureReporting::CanonicalType<
+  T, std::enable_if_t<std::is_integral<T>::value>>
+{
+  using type = std::conditional_t<std::is_signed<T>::value, intmax_t, uintmax_t>;
+};
+
+// Floating point types canonicalize to double.
+template<typename T>
+struct CheckedCastFailureReporting::CanonicalType<
+  T, std::enable_if_t<std::is_floating_point<T>::value>>
+{
+  using type = double;
+};
+
+// Enum types canonicalize to the canonicalization of the enum's underlying type.
+template<typename T>
+struct CheckedCastFailureReporting::CanonicalType<
+  T, std::enable_if_t<std::is_enum<T>::value>>
+{
+  using type = typename CanonicalType<std::underlying_type_t<T>>::type;
+};
+
+template <typename ToType, typename FromType>
+constexpr ToType checked_cast(FromType thing,
+                              DEBUG_ONLY(const SourceLocation& location = SourceLocation())) {
+  ToType result = static_cast<ToType>(thing);
+#ifdef ASSERT
+  if (static_cast<FromType>(result) != thing) {
+    TOUCH_ASSERT_POISON;
+    CheckedCastFailureReporting::report(thing, result, location);
+  }
+#endif // ASSERT
   return result;
 }
 

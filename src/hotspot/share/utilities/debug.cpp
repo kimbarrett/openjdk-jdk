@@ -175,10 +175,11 @@ static void print_error_for_unit_test(const char* message, const char* detail_fm
   }
 }
 
-void report_vm_error(const char* file, int line, const char* error_msg, const char* detail_fmt, ...)
-{
-  va_list detail_args;
-  va_start(detail_args, detail_fmt);
+void report_vm_error(const char* file,
+                     int line,
+                     const char* error_msg,
+                     const char* detail_fmt,
+                     va_list detail_args) {
   void* context = nullptr;
 #ifdef CAN_SHOW_REGISTERS_ON_ASSERT
   if (g_assertion_context != nullptr && os::current_thread_id() == g_asserting_thread) {
@@ -189,6 +190,12 @@ void report_vm_error(const char* file, int line, const char* error_msg, const ch
   print_error_for_unit_test(error_msg, detail_fmt, detail_args);
 
   VMError::report_and_die(Thread::current_or_null(), context, file, line, error_msg, detail_fmt, detail_args);
+}
+
+void report_vm_error(const char* file, int line, const char* error_msg, const char* detail_fmt, ...) {
+  va_list detail_args;
+  va_start(detail_args, detail_fmt);
+  report_vm_error(file, line, error_msg, detail_fmt, detail_args);
   va_end(detail_args);
 }
 

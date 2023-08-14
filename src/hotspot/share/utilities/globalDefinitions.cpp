@@ -339,6 +339,19 @@ int type2aelembytes(BasicType t, bool allow_address) {
 }
 #endif
 
+void CheckedCastFailureReporting::report_impl(const SourceLocation& location,
+                                              const char* formatter,
+                                              ...) {
+  va_list ap;
+  va_start(ap, formatter);
+  report_vm_error(location.file_name(),
+                  location.line(),
+                  "checked_cast failed",
+                  formatter,
+                  ap);
+  va_end(ap);
+}
+
 // Support for 64-bit integer arithmetic
 
 // The following code is mostly taken from JVM typedefs_md.h and system_md.c
