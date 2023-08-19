@@ -430,7 +430,7 @@ uint G1ConcurrentRefine::worker_id_offset() {
 
 bool G1ConcurrentRefine::try_refinement_step(uint worker_id,
                                              size_t stop_at,
-                                             G1ConcurrentRefineStats* stats) {
+                                             G1ConcurrentRefineStats& stats) {
   uint adjusted_id = worker_id + worker_id_offset();
   return _dcqs.refine_completed_buffer_concurrently(adjusted_id, stop_at, stats);
 }

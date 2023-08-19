@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,7 +24,6 @@
 #ifndef SHARE_GC_G1_G1THREADLOCALDATA_HPP
 #define SHARE_GC_G1_G1THREADLOCALDATA_HPP
 
-#include "gc/g1/g1BarrierSet.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
 #include "gc/shared/gc_globals.hpp"
 #include "gc/shared/satbMarkQueue.hpp"
@@ -32,14 +31,22 @@
 #include "utilities/debug.hpp"
 #include "utilities/sizes.hpp"
 
+class G1ConcurrentRefineStats;
+
 class G1ThreadLocalData {
 private:
+  // Used to construct/destruct stats before/after dirty card queue.
+  struct RefinementStatsHolder {
+    G1ConcurrentRefineStats* _stats;
+    RefinementStatsHolder();
+    ~RefinementStatsHolder();
+  };
+
+  RefinementStatsHolder _refinement_stats_holder;
   SATBMarkQueue _satb_mark_queue;
   G1DirtyCardQueue _dirty_card_queue;
 
-  G1ThreadLocalData() :
-      _satb_mark_queue(&G1BarrierSet::satb_mark_queue_set()),
-      _dirty_card_queue(&G1BarrierSet::dirty_card_queue_set()) {}
+  G1ThreadLocalData();
 
   static G1ThreadLocalData* data(Thread* thread) {
     assert(UseG1GC, "Sanity");
@@ -61,6 +68,10 @@ public:
 
   static void destroy(Thread* thread) {
     data(thread)->~G1ThreadLocalData();
+  }
+
+  static G1ConcurrentRefineStats& refinement_stats(Thread* thread) {
+    return *(data(thread)->_refinement_stats_holder._stats);
   }
 
   static SATBMarkQueue& satb_mark_queue(Thread* thread) {

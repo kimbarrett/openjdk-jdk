@@ -40,20 +40,10 @@ class G1DirtyCardQueueSet;
 class G1RedirtyCardsQueueSet;
 class Thread;
 
-// A ptrQueue whose elements are "oops", pointers to object heads.
+// A PtrQueue whose elements are pointers into the card table.
 class G1DirtyCardQueue: public PtrQueue {
-  G1ConcurrentRefineStats* _refinement_stats;
-
 public:
   G1DirtyCardQueue(G1DirtyCardQueueSet* qset);
-
-  // Flush before destroying; queue may be used to capture pending work while
-  // doing something else, with auto-flush on completion.
-  ~G1DirtyCardQueue();
-
-  G1ConcurrentRefineStats* refinement_stats() const {
-    return _refinement_stats;
-  }
 
   // Compiler support.
   static ByteSize byte_offset_of_index() {
@@ -204,7 +194,7 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // processed. Updates stats.
   bool refine_buffer(BufferNode* node,
                      uint worker_id,
-                     G1ConcurrentRefineStats* stats);
+                     G1ConcurrentRefineStats& stats);
 
   // Deal with buffer after a call to refine_buffer.  If fully processed,
   // deallocate the buffer.  Otherwise, record it as paused.
@@ -220,7 +210,7 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   BufferNode* get_completed_buffer();
 
   // Called when queue is full or has no buffer.
-  void handle_zero_index(G1DirtyCardQueue& queue);
+  void handle_zero_index(G1DirtyCardQueue& queue, G1ConcurrentRefineStats& stats);
 
   // Enqueue the buffer, and optionally perform refinement by the mutator.
   // Mutator refinement is only done by Java threads, and only if there
@@ -230,7 +220,7 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // Mutator refinement, if performed, stops processing a buffer if
   // SuspendibleThreadSet::should_yield(), recording the incompletely
   // processed buffer for later processing of the remainder.
-  void handle_completed_buffer(BufferNode* node, G1ConcurrentRefineStats* stats);
+  void handle_completed_buffer(BufferNode* node, G1ConcurrentRefineStats& stats);
 
 public:
   G1DirtyCardQueueSet(BufferNode::Allocator* allocator);
@@ -253,10 +243,12 @@ public:
 
   BufferNodeList take_all_completed_buffers();
 
-  void flush_queue(G1DirtyCardQueue& queue);
+  void flush_queue(G1DirtyCardQueue& queue, G1ConcurrentRefineStats& stats);
 
   using CardValue = G1CardTable::CardValue;
-  void enqueue(G1DirtyCardQueue& queue, volatile CardValue* card_ptr);
+  void enqueue(G1DirtyCardQueue& queue,
+               volatile CardValue* card_ptr,
+               G1ConcurrentRefineStats& stats);
 
   // If there are more than stop_at cards in the completed buffers, pop
   // a buffer, refine its contents, and return true.  Otherwise return
@@ -267,7 +259,7 @@ public:
   // the remainder.
   bool refine_completed_buffer_concurrently(uint worker_id,
                                             size_t stop_at,
-                                            G1ConcurrentRefineStats* stats);
+                                            G1ConcurrentRefineStats& stats);
 
   // If a full collection is happening, reset per-thread refinement stats and
   // partial logs, and release completed logs. The full collection will make
@@ -290,7 +282,7 @@ public:
   G1ConcurrentRefineStats concatenated_refinement_stats() const;
 
   // Accumulate refinement stats from threads that are detaching.
-  void record_detached_refinement_stats(G1ConcurrentRefineStats* stats);
+  void record_detached_refinement_stats(G1ConcurrentRefineStats& stats);
 
   // Number of cards above which mutator threads should do refinement.
   size_t mutator_refinement_threshold() const;

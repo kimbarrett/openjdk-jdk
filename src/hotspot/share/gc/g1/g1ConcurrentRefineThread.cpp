@@ -122,7 +122,7 @@ bool G1ConcurrentRefineThread::maybe_deactivate() {
 
 bool G1ConcurrentRefineThread::try_refinement_step(size_t stop_at) {
   assert(this == Thread::current(), "precondition");
-  return _cr->try_refinement_step(_worker_id, stop_at, &_refinement_stats);
+  return _cr->try_refinement_step(_worker_id, stop_at, _refinement_stats);
 }
 
 void G1ConcurrentRefineThread::stop_service() {

@@ -48,6 +48,7 @@
 
 class G1BarrierSetC1;
 class G1BarrierSetC2;
+class G1ConcurrentRefineStats;
 
 G1BarrierSet::G1BarrierSet(G1CardTable* card_table) :
   CardTableBarrierSet(make_barrier_set_assembler<G1BarrierSetAssembler>(),
@@ -97,7 +98,8 @@ void G1BarrierSet::write_ref_field_post_slow(volatile CardValue* byte) {
     *byte = G1CardTable::dirty_card_val();
     Thread* thr = Thread::current();
     G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thr);
-    G1BarrierSet::dirty_card_queue_set().enqueue(queue, byte);
+    G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thr);
+    G1BarrierSet::dirty_card_queue_set().enqueue(queue, byte, stats);
   }
 }
 
@@ -122,12 +124,13 @@ void G1BarrierSet::invalidate(JavaThread* thread, MemRegion mr) {
   // Enqueue if necessary.
   G1DirtyCardQueueSet& qset = G1BarrierSet::dirty_card_queue_set();
   G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thread);
+  G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
   for (; byte <= last_byte; byte++) {
     CardValue bv = *byte;
     assert(bv != G1CardTable::g1_young_card_val(), "Invalid card");
     if (bv != G1CardTable::dirty_card_val()) {
       *byte = G1CardTable::dirty_card_val();
-      qset.enqueue(queue, byte);
+      qset.enqueue(queue, byte, stats);
     }
   }
 }
@@ -167,8 +170,9 @@ void G1BarrierSet::on_thread_detach(Thread* thread) {
   }
   {
     G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thread);
+    G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
     G1DirtyCardQueueSet& qset = G1BarrierSet::dirty_card_queue_set();
-    qset.flush_queue(queue);
-    qset.record_detached_refinement_stats(queue.refinement_stats());
+    qset.flush_queue(queue, stats);
+    qset.record_detached_refinement_stats(stats);
   }
 }
