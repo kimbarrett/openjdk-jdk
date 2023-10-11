@@ -28,6 +28,7 @@
 #include "memory/allocation.hpp"
 #include "oops/oop.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/intrusiveList.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/singleWriterSynchronizer.hpp"
 
@@ -223,39 +224,10 @@ public:
 private:
   class Block;                  // Fixed-size array of oops, plus bookkeeping.
   class ActiveArray;            // Array of Blocks, plus bookkeeping.
-  class AllocationListEntry;    // Provides AllocationList links in a Block.
 
-  // Doubly-linked list of Blocks.  For all operations with a block
-  // argument, the block must be from the list's OopStorage.
-  class AllocationList {
-    const Block* _head;
-    const Block* _tail;
+  static const IntrusiveListEntry& allocation_list_entry(const Block& block);
+  using AllocationList = IntrusiveList<Block, allocation_list_entry>;
 
-    NONCOPYABLE(AllocationList);
-
-  public:
-    AllocationList();
-    ~AllocationList();
-
-    Block* head();
-    Block* tail();
-    const Block* chead() const;
-    const Block* ctail() const;
-
-    Block* prev(Block& block);
-    Block* next(Block& block);
-
-    const Block* prev(const Block& block) const;
-    const Block* next(const Block& block) const;
-
-    void push_front(const Block& block);
-    void push_back(const Block& block);
-    void unlink(const Block& block);
-
-    bool contains(const Block& block) const;
-  };
-
-private:
   const char* _name;
   ActiveArray* _active_array;
   AllocationList _allocation_list;

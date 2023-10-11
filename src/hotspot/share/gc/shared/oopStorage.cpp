@@ -49,73 +49,6 @@
 #include "utilities/population_count.hpp"
 #include "utilities/powerOfTwo.hpp"
 
-OopStorage::AllocationListEntry::AllocationListEntry() : _prev(nullptr), _next(nullptr) {}
-
-OopStorage::AllocationListEntry::~AllocationListEntry() {
-  assert(_prev == nullptr, "deleting attached block");
-  assert(_next == nullptr, "deleting attached block");
-}
-
-OopStorage::AllocationList::AllocationList() : _head(nullptr), _tail(nullptr) {}
-
-OopStorage::AllocationList::~AllocationList() {
-  // ~OopStorage() empties its lists before destroying them.
-  assert(_head == nullptr, "deleting non-empty block list");
-  assert(_tail == nullptr, "deleting non-empty block list");
-}
-
-void OopStorage::AllocationList::push_front(const Block& block) {
-  const Block* old = _head;
-  if (old == nullptr) {
-    assert(_tail == nullptr, "invariant");
-    _head = _tail = &block;
-  } else {
-    block.allocation_list_entry()._next = old;
-    old->allocation_list_entry()._prev = &block;
-    _head = &block;
-  }
-}
-
-void OopStorage::AllocationList::push_back(const Block& block) {
-  const Block* old = _tail;
-  if (old == nullptr) {
-    assert(_head == nullptr, "invariant");
-    _head = _tail = &block;
-  } else {
-    old->allocation_list_entry()._next = &block;
-    block.allocation_list_entry()._prev = old;
-    _tail = &block;
-  }
-}
-
-void OopStorage::AllocationList::unlink(const Block& block) {
-  const AllocationListEntry& block_entry = block.allocation_list_entry();
-  const Block* prev_blk = block_entry._prev;
-  const Block* next_blk = block_entry._next;
-  block_entry._prev = nullptr;
-  block_entry._next = nullptr;
-  if ((prev_blk == nullptr) && (next_blk == nullptr)) {
-    assert(_head == &block, "invariant");
-    assert(_tail == &block, "invariant");
-    _head = _tail = nullptr;
-  } else if (prev_blk == nullptr) {
-    assert(_head == &block, "invariant");
-    next_blk->allocation_list_entry()._prev = nullptr;
-    _head = next_blk;
-  } else if (next_blk == nullptr) {
-    assert(_tail == &block, "invariant");
-    prev_blk->allocation_list_entry()._next = nullptr;
-    _tail = prev_blk;
-  } else {
-    next_blk->allocation_list_entry()._prev = prev_blk;
-    prev_blk->allocation_list_entry()._next = next_blk;
-  }
-}
-
-bool OopStorage::AllocationList::contains(const Block& block) const {
-  return (next(block) != nullptr) || (ctail() == &block);
-}
-
 OopStorage::ActiveArray::ActiveArray(size_t size) :
   _size(size),
   _block_count(0),
@@ -451,7 +384,7 @@ oop* OopStorage::allocate() {
     // Transitioning from not full to full.
     // Remove full blocks from consideration by future allocates.
     log_block_transition(block, "full");
-    _allocation_list.unlink(*block);
+    _allocation_list.erase(*block);
   }
   log_trace(oopstorage, ref)("%s: allocated " PTR_FORMAT, name(), p2i(result));
   return result;
@@ -474,7 +407,7 @@ size_t OopStorage::allocate(oop** ptrs, size_t size) {
     block = block_for_allocation();
     if (block == nullptr) return 0; // Block allocation failed.
     // Taking all remaining entries, so remove from list.
-    _allocation_list.unlink(*block);
+    _allocation_list.erase(*block);
     // Transitioning from empty to not empty.
     if (block->is_empty()) {
       log_block_transition(block, "not empty");
@@ -544,15 +477,14 @@ OopStorage::Block* OopStorage::block_for_allocation() {
   assert_lock_strong(_allocation_mutex);
   while (true) {
     // Use the first block in _allocation_list for the allocation.
-    Block* block = _allocation_list.head();
-    if (block != nullptr) {
-      return block;
+    if (!_allocation_list.empty()) {
+      return &(_allocation_list.front());
     } else if (reduce_deferred_updates()) {
       // Might have added a block to the _allocation_list, so retry.
     } else if (try_add_block()) {
       // Successfully added a new block to the list, so retry.
-      assert(_allocation_list.chead() != nullptr, "invariant");
-    } else if (_allocation_list.chead() != nullptr) {
+      assert(!_allocation_list.empty(), "invariant");
+    } else if (!_allocation_list.empty()) {
       // Trying to add a block failed, but some other thread added to the
       // list while we'd dropped the lock over the new block allocation.
     } else if (!reduce_deferred_updates()) { // Once more before failure.
@@ -744,12 +676,13 @@ bool OopStorage::reduce_deferred_updates() {
   uintx allocated = block->allocated_bitmask();
   if (is_full_bitmask(allocated)) {
     // If full then it shouldn't be in the list, and should stay that way.
-    assert(!_allocation_list.contains(*block), "invariant");
-  } else if (_allocation_list.contains(*block)) {
+    assert(!block->is_attached(), "invariant");
+  } else if (block->is_attached()) {
     // Block is in list.  If empty, move to the end for possible deletion.
     if (is_empty_bitmask(allocated)) {
-      _allocation_list.unlink(*block);
-      _allocation_list.push_back(*block);
+      _allocation_list.splice(_allocation_list.end(),
+                              _allocation_list,
+                              _allocation_list.iterator_to(*block));
     }
   } else if (is_empty_bitmask(allocated)) {
     // Block is empty and not in list. Add to back for possible deletion.
@@ -851,9 +784,7 @@ OopStorage::~OopStorage() {
     _deferred_updates = block->deferred_updates_next();
     block->set_deferred_updates_next(nullptr);
   }
-  while ((block = _allocation_list.head()) != nullptr) {
-    _allocation_list.unlink(*block);
-  }
+  _allocation_list.clear();
   bool unreferenced = _active_array->decrement_refcount();
   assert(unreferenced, "deleting storage while _active_array is referenced");
   for (size_t i = _active_array->block_count(); 0 < i; ) {
@@ -971,11 +902,13 @@ bool OopStorage::delete_empty_blocks() {
       // Be safepoint-polite while looping.
       MutexUnlocker ul(_allocation_mutex, Mutex::_no_safepoint_check_flag);
       ThreadBlockInVM tbiv(JavaThread::current());
+    } else if (_allocation_list.empty()) {
+      return false;
     } else {
-      Block* block = _allocation_list.tail();
-      if ((block == nullptr) || !block->is_empty()) {
+      Block& block = _allocation_list.back();
+      if (!block.is_empty()) {
         return false;
-      } else if (!block->is_safe_to_delete()) {
+      } else if (!block.is_safe_to_delete()) {
         // Look for other work while waiting for block to be deletable.
         break;
       }
@@ -988,13 +921,13 @@ bool OopStorage::delete_empty_blocks() {
         // but don't re-notify, to avoid useless spinning of the
         // service thread.  Instead, iteration completion notifies.
         if (_concurrent_iteration_count > 0) return true;
-        _active_array->remove(block);
+        _active_array->remove(&block);
       }
       // Remove block from _allocation_list and delete it.
-      _allocation_list.unlink(*block);
+      _allocation_list.erase(block);
       // Be safepoint-polite while deleting and looping.
       MutexUnlocker ul(_allocation_mutex, Mutex::_no_safepoint_check_flag);
-      delete_empty_block(*block);
+      delete_empty_block(block);
       ThreadBlockInVM tbiv(JavaThread::current());
     }
   }
