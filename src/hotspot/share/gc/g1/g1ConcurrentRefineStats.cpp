@@ -29,13 +29,23 @@ G1ConcurrentRefineStats::G1ConcurrentRefineStats() :
   _refinement_time(),
   _refined_cards(0),
   _precleaned_cards(0),
-  _dirtied_cards(0)
+  _dirtied_cards(0),
+  _written_cards_processing_time(),
+  _written_cards_dirtied(0),
+  _written_cards_filtered(0),
+  _written_cards(0)
 {}
 
 double G1ConcurrentRefineStats::refinement_rate_ms() const {
   // Report 0 when no time recorded because no refinement performed.
   double secs = refinement_time().seconds();
-  return (secs > 0) ? (refined_cards() / (secs * MILLIUNITS)) : 0.0;
+  return (secs > 0) ? ((refined_cards() + precleaned_cards()) / (secs * MILLIUNITS)) : 0.0;
+}
+
+double G1ConcurrentRefineStats::written_cards_processing_rate_ms() const {
+  // Report 0 when no time recorded.
+  double secs = written_cards_processing_time().seconds();
+  return (secs > 0) ? (written_cards_processed() / (secs * MILLIUNITS)) : 0.0;
 }
 
 G1ConcurrentRefineStats&
@@ -44,6 +54,10 @@ G1ConcurrentRefineStats::operator+=(const G1ConcurrentRefineStats& other) {
   _refined_cards += other._refined_cards;
   _precleaned_cards += other._precleaned_cards;
   _dirtied_cards += other._dirtied_cards;
+  _written_cards_processing_time += other._written_cards_processing_time;
+  _written_cards_dirtied += other._written_cards_dirtied;
+  _written_cards_filtered += other._written_cards_filtered;
+  _written_cards += other._written_cards;
   return *this;
 }
 
@@ -58,6 +72,13 @@ G1ConcurrentRefineStats::operator-=(const G1ConcurrentRefineStats& other) {
   _refined_cards = clipped_sub(_refined_cards, other._refined_cards);
   _precleaned_cards = clipped_sub(_precleaned_cards, other._precleaned_cards);
   _dirtied_cards = clipped_sub(_dirtied_cards, other._dirtied_cards);
+  _written_cards_processing_time = clipped_sub(_written_cards_processing_time,
+                                               other._written_cards_processing_time);
+  _written_cards_dirtied = clipped_sub(_written_cards_dirtied,
+                                       other._written_cards_dirtied);
+  _written_cards_filtered = clipped_sub(_written_cards_filtered,
+                                        other._written_cards_filtered);
+  _written_cards = clipped_sub(_written_cards, other._written_cards);
   return *this;
 }
 

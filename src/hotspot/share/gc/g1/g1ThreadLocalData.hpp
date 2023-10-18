@@ -25,6 +25,7 @@
 #define SHARE_GC_G1_G1THREADLOCALDATA_HPP
 
 #include "gc/g1/g1DirtyCardQueue.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "gc/shared/gc_globals.hpp"
 #include "gc/shared/satbMarkQueue.hpp"
 #include "runtime/javaThread.hpp"
@@ -44,6 +45,7 @@ private:
 
   RefinementStatsHolder _refinement_stats_holder;
   SATBMarkQueue _satb_mark_queue;
+  G1WrittenCardQueue _written_card_queue;
   G1DirtyCardQueue _dirty_card_queue;
 
   G1ThreadLocalData();
@@ -55,6 +57,10 @@ private:
 
   static ByteSize satb_mark_queue_offset() {
     return Thread::gc_data_offset() + byte_offset_of(G1ThreadLocalData, _satb_mark_queue);
+  }
+
+  static ByteSize written_card_queue_offset() {
+    return Thread::gc_data_offset() + byte_offset_of(G1ThreadLocalData, _written_card_queue);
   }
 
   static ByteSize dirty_card_queue_offset() {
@@ -78,6 +84,10 @@ public:
     return data(thread)->_satb_mark_queue;
   }
 
+  static G1WrittenCardQueue& written_card_queue(Thread* thread) {
+    return data(thread)->_written_card_queue;
+  }
+
   static G1DirtyCardQueue& dirty_card_queue(Thread* thread) {
     return data(thread)->_dirty_card_queue;
   }
@@ -92,6 +102,18 @@ public:
 
   static ByteSize satb_mark_queue_buffer_offset() {
     return satb_mark_queue_offset() + SATBMarkQueue::byte_offset_of_buf();
+  }
+
+  static ByteSize written_card_queue_index_offset() {
+    return written_card_queue_offset() + G1WrittenCardQueue::byte_offset_of_index();
+  }
+
+  static ByteSize written_card_queue_inline_buffer_offset() {
+    return written_card_queue_offset() + G1WrittenCardQueue::byte_offset_of_inline_buffer();
+  }
+
+  static ByteSize written_card_queue_indirect_buffer_offset() {
+    return written_card_queue_offset() + G1WrittenCardQueue::byte_offset_of_indirect_buffer();
   }
 
   static ByteSize dirty_card_queue_index_offset() {

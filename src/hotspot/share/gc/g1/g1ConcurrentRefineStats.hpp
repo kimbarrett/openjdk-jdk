@@ -37,6 +37,10 @@ class G1ConcurrentRefineStats : public CHeapObj<mtGC> {
   size_t _refined_cards;
   size_t _precleaned_cards;
   size_t _dirtied_cards;
+  Tickspan _written_cards_processing_time;
+  size_t _written_cards_dirtied;
+  size_t _written_cards_filtered;
+  size_t _written_cards;
 
 public:
   G1ConcurrentRefineStats();
@@ -57,10 +61,40 @@ public:
   // Number of cards marked dirty and in need of refinement.
   size_t dirtied_cards() const { return _dirtied_cards; }
 
+  // All the stats related to written cards are only used when
+  // G1UseWrittenCardQueues is true.
+
+  // Time spent processing written cards.
+  Tickspan written_cards_processing_time() const {
+    return _written_cards_processing_time;
+  }
+
+  // Number of written cards that were dirtied.
+  size_t written_cards_dirtied() const { return _written_cards_dirtied; }
+
+  // Number of processed written cards that were discarded by filtering.
+  size_t written_cards_filtered() const { return _written_cards_filtered; }
+
+  // Number of written cards processed, when G1UseWrittenCardQueues is true;
+  // This is the sum of the number of cards dirtied or filtered.
+  size_t written_cards_processed() const {
+    return written_cards_dirtied() + written_cards_filtered();
+  }
+
+  // Number of written cards, when G1UseWrittenCardQueues is true.
+  size_t written_cards() const { return _written_cards; }
+
+  // Processing rate, in cards per ms, when G1UseWrittenCardQueues is true.
+  double written_cards_processing_rate_ms() const;
+
   void inc_refinement_time(Tickspan t) { _refinement_time += t; }
   void inc_refined_cards(size_t cards) { _refined_cards += cards; }
   void inc_precleaned_cards(size_t cards) { _precleaned_cards += cards; }
   void inc_dirtied_cards(size_t cards) { _dirtied_cards += cards; }
+  void inc_written_cards_processing_time(Tickspan t) { _written_cards_processing_time += t; }
+  void inc_written_cards_dirtied(size_t cards) { _written_cards_dirtied += cards; }
+  void inc_written_cards_filtered(size_t cards) { _written_cards_filtered += cards; }
+  void inc_written_cards(size_t cards) { _written_cards += cards; }
 
   G1ConcurrentRefineStats& operator+=(const G1ConcurrentRefineStats& other);
   G1ConcurrentRefineStats& operator-=(const G1ConcurrentRefineStats& other);

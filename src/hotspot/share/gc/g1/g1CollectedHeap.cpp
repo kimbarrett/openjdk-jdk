@@ -793,10 +793,8 @@ void G1CollectedHeap::prepare_for_mutator_after_full_collection() {
 
 void G1CollectedHeap::abort_refinement() {
   // Discard all remembered set updates and reset refinement statistics.
-  G1BarrierSet::dirty_card_queue_set().abandon_logs_and_stats();
-  assert(G1BarrierSet::dirty_card_queue_set().num_cards() == 0,
-         "DCQS should be empty");
-  concurrent_refine()->get_and_reset_refinement_stats();
+  G1BarrierSet::abandon_post_barrier_logs_and_stats();
+  concurrent_refine()->abort_refinement();
 }
 
 void G1CollectedHeap::verify_after_full_collection() {

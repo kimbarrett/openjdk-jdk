@@ -46,6 +46,9 @@ class G1Analytics: public CHeapObj<mtGC> {
   TruncatedSeq _alloc_rate_ms_seq;
   double        _prev_collection_pause_end_ms;
 
+  TruncatedSeq _concurrent_dirtying_rate_ms_seq;
+  TruncatedSeq _written_cards_rate_ms_seq;
+  TruncatedSeq _written_cards_in_thread_buffers_seq;
   TruncatedSeq _concurrent_refine_rate_ms_seq;
   TruncatedSeq _dirtied_cards_rate_ms_seq;
   TruncatedSeq _dirtied_cards_in_thread_buffers_seq;
@@ -125,6 +128,9 @@ public:
   void report_concurrent_mark_remark_times_ms(double ms);
   void report_concurrent_mark_cleanup_times_ms(double ms);
   void report_alloc_rate_ms(double alloc_rate);
+  void report_concurrent_dirtying_rate_ms(double cards_per_ms);
+  void report_written_cards_rate_ms(double cards_per_ms);
+  void report_written_cards_in_thread_buffers(size_t num_cards);
   void report_concurrent_refine_rate_ms(double cards_per_ms);
   void report_dirtied_cards_rate_ms(double cards_per_ms);
   void report_dirtied_cards_in_thread_buffers(size_t num_cards);
@@ -143,6 +149,9 @@ public:
   double predict_alloc_rate_ms() const;
   int num_alloc_rate_ms() const;
 
+  double predict_concurrent_dirtying_rate_ms() const;
+  double predict_written_cards_rate_ms() const;
+  size_t predict_written_cards_in_thread_buffers() const;
   double predict_concurrent_refine_rate_ms() const;
   double predict_dirtied_cards_rate_ms() const;
   size_t predict_dirtied_cards_in_thread_buffers() const;

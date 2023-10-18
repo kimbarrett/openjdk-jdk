@@ -166,7 +166,6 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
 
   G1FreeIdSet _free_ids;
 
-  G1ConcurrentRefineStats _concatenated_refinement_stats;
   G1ConcurrentRefineStats _detached_refinement_stats;
 
   // Verify _num_cards == sum of cards in the completed queue.
@@ -179,9 +178,6 @@ class G1DirtyCardQueueSet: public PtrQueueSet {
   // Thread-safe transfer paused buffers for previous safepoints to the queue.
   // precondition: not at safepoint.
   void enqueue_previous_paused_buffers();
-  // Transfer all paused buffers to the queue.
-  // precondition: at safepoint.
-  void enqueue_all_paused_buffers();
 
   void abandon_completed_buffers();
 
@@ -261,34 +257,36 @@ public:
                                             size_t stop_at,
                                             G1ConcurrentRefineStats& stats);
 
-  // If a full collection is happening, reset per-thread refinement stats and
-  // partial logs, and release completed logs. The full collection will make
-  // them all irrelevant.
+  // If a full collection is happening, release completed logs and reset
+  // associated stats. The full collection will make them all irrelevant.
   // precondition: at safepoint.
-  void abandon_logs_and_stats();
+  void abandon_completed_buffers_and_stats();
 
-  // Update global refinement statistics with the ones given and the ones from
-  // detached threads.
-  // precondition: at safepoint.
-  void update_refinement_stats(G1ConcurrentRefineStats& stats);
-  // Add the given thread's partial logs to the global list and return and reset
-  // its refinement stats.
-  // precondition: at safepoint.
-  G1ConcurrentRefineStats concatenate_log_and_stats(Thread* thread);
+  // For abandoning thread-local queue contents.
+  void reset_queue(G1DirtyCardQueue& queue);
 
-  // Return the total of mutator refinement stats for all threads.
+  // Transfer all paused buffers to the queue.
   // precondition: at safepoint.
-  // precondition: only call after concatenate_logs_and_stats.
-  G1ConcurrentRefineStats concatenated_refinement_stats() const;
+  void enqueue_all_paused_buffers();
 
   // Accumulate refinement stats from threads that are detaching.
   void record_detached_refinement_stats(G1ConcurrentRefineStats& stats);
+
+  // Return the accumulated refinement stats from threads that were detaching,
+  // resetting the accumulator.
+  // precondition: at safepoint.
+  G1ConcurrentRefineStats get_and_reset_detached_refinement_stats();
 
   // Number of cards above which mutator threads should do refinement.
   size_t mutator_refinement_threshold() const;
 
   // Set number of cards above which mutator threads should do refinement.
   void set_mutator_refinement_threshold(size_t value);
+
+  // Conditionally refine a completed buffer by the current thread if it is a
+  // mutator thread and over the threshold for doing so.  The stats is from
+  // the current thread.
+  void mutator_refine_completed_buffer(G1ConcurrentRefineStats& stats);
 };
 
 #endif // SHARE_GC_G1_G1DIRTYCARDQUEUE_HPP

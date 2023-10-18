@@ -37,6 +37,7 @@
 class G1ConcurrentRefine;
 class G1ConcurrentRefineThread;
 class G1DirtyCardQueueSet;
+class G1WrittenCardQueueSet;
 class G1Policy;
 class ThreadClosure;
 
@@ -117,6 +118,7 @@ class G1ConcurrentRefine : public CHeapObj<mtGC> {
   bool _needs_adjust;
   G1ConcurrentRefineThreadsNeeded _threads_needed;
   G1ConcurrentRefineThreadControl _thread_control;
+  G1WrittenCardQueueSet& _wcqs;
   G1DirtyCardQueueSet& _dcqs;
 
   G1ConcurrentRefine(G1Policy* policy);
@@ -142,6 +144,8 @@ class G1ConcurrentRefine : public CHeapObj<mtGC> {
                                    size_t processed_logged_cards,
                                    size_t predicted_thread_buffer_cards,
                                    double goal_ms);
+
+  void update_mutator_refinement_threshold(size_t new_threshold);
 
   uint64_t adjust_threads_period_ms() const;
   bool is_in_last_adjustment_period() const;
@@ -201,6 +205,11 @@ public:
   // precondition: current thread is the primary refinement thread.
   void reduce_threads_wanted();
 
+  // Possibly reduce the number of active threads, based on the amount of card
+  // processing work currently pending.  Used only when
+  // G1DeferDirtyingWrittenCards is true.
+  void maybe_reduce_threads_wanted();
+
   // Test whether the thread designated by worker_id should be active.
   bool is_thread_wanted(uint worker_id) const;
 
@@ -217,6 +226,9 @@ public:
 
   // Iterate over all concurrent refinement threads applying the given closure.
   void threads_do(ThreadClosure *tc);
+
+  // Discard refinement related data in preparation for a full GC.
+  void abort_refinement();
 };
 
 #endif // SHARE_GC_G1_G1CONCURRENTREFINE_HPP

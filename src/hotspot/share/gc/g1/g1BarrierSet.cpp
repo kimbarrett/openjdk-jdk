@@ -29,6 +29,7 @@
 #include "gc/g1/g1CollectedHeap.inline.hpp"
 #include "gc/g1/g1SATBMarkQueueSet.hpp"
 #include "gc/g1/g1ThreadLocalData.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "gc/g1/heapRegion.hpp"
 #include "gc/shared/satbMarkQueue.hpp"
 #include "logging/log.hpp"
@@ -38,6 +39,7 @@
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/javaThread.hpp"
 #include "runtime/orderAccess.hpp"
+#include "runtime/threads.hpp"
 #include "utilities/macros.hpp"
 #ifdef COMPILER1
 #include "gc/g1/c1/g1BarrierSetC1.hpp"
@@ -57,8 +59,10 @@ G1BarrierSet::G1BarrierSet(G1CardTable* card_table) :
                       card_table,
                       BarrierSet::FakeRtti(BarrierSet::G1BarrierSet)),
   _satb_mark_queue_buffer_allocator("SATB Buffer Allocator", G1SATBBufferSize),
+  _written_card_queue_buffer_allocator("WC Buffer Allocator", G1WrittenCardBufferSize),
   _dirty_card_queue_buffer_allocator("DC Buffer Allocator", G1UpdateBufferSize),
   _satb_mark_queue_set(&_satb_mark_queue_buffer_allocator),
+  _written_card_queue_set(&_written_card_queue_buffer_allocator),
   _dirty_card_queue_set(&_dirty_card_queue_buffer_allocator)
 {}
 
@@ -151,6 +155,10 @@ void G1BarrierSet::on_thread_attach(Thread* thread) {
   assert(!satbq.is_active(), "SATB queue should not be active");
   assert(satbq.buffer() == nullptr, "SATB queue should not have a buffer");
   assert(satbq.index() == 0, "SATB queue index should be zero");
+  if (G1UseWrittenCardQueues) {
+    G1WrittenCardQueue& writtenq = G1ThreadLocalData::written_card_queue(thread);
+    assert(writtenq.is_empty(), "Written Card queue should be empty");
+  }
   G1DirtyCardQueue& dirtyq = G1ThreadLocalData::dirty_card_queue(thread);
   assert(dirtyq.buffer() == nullptr, "Dirty Card queue should not have a buffer");
   assert(dirtyq.index() == 0, "Dirty Card queue index should be zero");
@@ -168,6 +176,17 @@ void G1BarrierSet::on_thread_detach(Thread* thread) {
     SATBMarkQueue& queue = G1ThreadLocalData::satb_mark_queue(thread);
     G1BarrierSet::satb_mark_queue_set().flush_queue(queue);
   }
+  if (G1UseWrittenCardQueues) {
+    G1WrittenCardQueue& wcq = G1ThreadLocalData::written_card_queue(thread);
+    G1DirtyCardQueue& dcq = G1ThreadLocalData::dirty_card_queue(thread);
+    G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
+    wcq.mark_cards_dirty(dcq, stats);
+    if (!G1UseInlineWrittenCardBuffers) {
+      // FIXME: Kludgy way to discard buffer without additional API.
+      wcq.~G1WrittenCardQueue();
+      ::new (&wcq) G1WrittenCardQueue();
+    }
+  }
   {
     G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thread);
     G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
@@ -175,4 +194,29 @@ void G1BarrierSet::on_thread_detach(Thread* thread) {
     qset.flush_queue(queue, stats);
     qset.record_detached_refinement_stats(stats);
   }
+}
+
+void G1BarrierSet::abandon_post_barrier_logs_and_stats() {
+  assert_at_safepoint();
+
+  G1BarrierSet* bs = g1_barrier_set();
+  G1DirtyCardQueueSet& dcqs = bs->dirty_card_queue_set();
+
+  struct AbandonClosure : public ThreadClosure {
+    G1DirtyCardQueueSet& _dcqs;
+    AbandonClosure(G1DirtyCardQueueSet& dcqs) : _dcqs(dcqs) {}
+    void do_thread(Thread* t) override {
+      if (G1UseWrittenCardQueues) {
+        G1ThreadLocalData::written_card_queue(t).reset();
+      }
+      _dcqs.reset_queue(G1ThreadLocalData::dirty_card_queue(t));
+      G1ThreadLocalData::refinement_stats(t).reset();
+    }
+  } closure(dcqs);
+  Threads::threads_do(&closure);
+
+  if (G1UseWrittenCardQueues) {
+    bs->written_card_queue_set().abandon_completed_buffers();
+  }
+  bs->dirty_card_queue_set().abandon_completed_buffers_and_stats();
 }

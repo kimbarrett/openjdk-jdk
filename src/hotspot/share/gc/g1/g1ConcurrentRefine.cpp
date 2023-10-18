@@ -29,10 +29,12 @@
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
 #include "gc/g1/g1Policy.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "gc/g1/heapRegion.inline.hpp"
 #include "gc/g1/heapRegionRemSet.inline.hpp"
 #include "gc/shared/gc_globals.hpp"
 #include "logging/log.hpp"
+#include "logging/logStream.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/iterator.hpp"
 #include "runtime/java.hpp"
@@ -151,6 +153,7 @@ G1ConcurrentRefine::G1ConcurrentRefine(G1Policy* policy) :
   _needs_adjust(false),
   _threads_needed(policy, adjust_threads_period_ms()),
   _thread_control(G1ConcRefinementThreads),
+  _wcqs(G1BarrierSet::written_card_queue_set()),
   _dcqs(G1BarrierSet::dirty_card_queue_set())
 {}
 
@@ -179,6 +182,23 @@ void G1ConcurrentRefine::threads_do(ThreadClosure *tc) {
   _thread_control.worker_threads_do(tc);
 }
 
+void G1ConcurrentRefine::abort_refinement() {
+  if (G1DeferDirtyingWrittenCards) {
+    struct ResetLogs : public ThreadClosure {
+      G1DirtyCardQueueSet& _dcqs;
+      ResetLogs() : _dcqs(G1BarrierSet::dirty_card_queue_set()) {}
+      void do_thread(Thread* thread) override {
+        auto crt = static_cast<G1ConcurrentRefineThread*>(thread);
+        _dcqs.reset_queue(crt->dirty_card_queue());
+        crt->refinement_stats()->reset();
+      }
+    } _tc;
+    threads_do(&_tc);
+  } else {
+    get_and_reset_refinement_stats();
+  }
+}
+
 void G1ConcurrentRefine::update_pending_cards_target(double logged_cards_time_ms,
                                                      size_t processed_logged_cards,
                                                      size_t predicted_thread_buffer_cards,
@@ -205,6 +225,13 @@ void G1ConcurrentRefine::update_pending_cards_target(double logged_cards_time_ms
   log_debug(gc, ergo, refine)("New pending cards target: %zu", new_target);
 }
 
+void G1ConcurrentRefine::update_mutator_refinement_threshold(size_t new_threshold) {
+  if (G1DeferDirtyingWrittenCards) {
+    _wcqs.set_mutator_should_mark_cards_dirty(new_threshold != SIZE_MAX);
+  }
+  _dcqs.set_mutator_refinement_threshold(new_threshold);
+}
+
 void G1ConcurrentRefine::adjust_after_gc(double logged_cards_time_ms,
                                          size_t processed_logged_cards,
                                          size_t predicted_thread_buffer_cards,
@@ -217,13 +244,13 @@ void G1ConcurrentRefine::adjust_after_gc(double logged_cards_time_ms,
                               goal_ms);
   if (_thread_control.max_num_threads() == 0) {
     // If no refinement threads then the mutator threshold is the target.
-    _dcqs.set_mutator_refinement_threshold(_pending_cards_target);
+    update_mutator_refinement_threshold(_pending_cards_target);
   } else {
     // Provisionally make the mutator threshold unlimited, to be updated by
     // the next periodic adjustment.  Because card state may have changed
     // drastically, record that adjustment is needed and kick the primary
     // thread, in case it is waiting.
-    _dcqs.set_mutator_refinement_threshold(SIZE_MAX);
+    update_mutator_refinement_threshold(SIZE_MAX);
     _needs_adjust = true;
     if (is_pending_cards_target_initialized()) {
       _thread_control.activate(0);
@@ -335,13 +362,15 @@ bool G1ConcurrentRefine::is_in_last_adjustment_period() const {
 
 void G1ConcurrentRefine::adjust_threads_wanted(size_t available_bytes) {
   assert_current_thread_is_primary_refinement_thread();
-  size_t num_cards = _dcqs.num_cards();
+  size_t num_written_cards = _wcqs.num_cards();
+  size_t num_dirty_cards = _dcqs.num_cards();
   size_t mutator_threshold = SIZE_MAX;
   uint old_wanted = Atomic::load(&_threads_wanted);
 
   _threads_needed.update(old_wanted,
                          available_bytes,
-                         num_cards,
+                         num_written_cards,
+                         num_dirty_cards,
                          _pending_cards_target);
   uint new_wanted = _threads_needed.threads_needed();
   if (new_wanted > _thread_control.max_num_threads()) {
@@ -360,13 +389,21 @@ void G1ConcurrentRefine::adjust_threads_wanted(size_t available_bytes) {
     mutator_threshold = _pending_cards_target;
   }
   Atomic::store(&_threads_wanted, new_wanted);
-  _dcqs.set_mutator_refinement_threshold(mutator_threshold);
-  log_debug(gc, refine)("Concurrent refinement: wanted %u, cards: %zu, "
-                        "predicted: %zu, time: %1.2fms",
-                        new_wanted,
-                        num_cards,
-                        _threads_needed.predicted_cards_at_next_gc(),
-                        _threads_needed.predicted_time_until_next_gc_ms());
+  update_mutator_refinement_threshold(mutator_threshold);
+  LogTarget(Debug, gc, refine) lt{};
+  if (lt.is_enabled()) {
+    LogStream ls{lt};
+    ls.print("Concurrent refinement: wanted %u, ", new_wanted);
+    if (G1DeferDirtyingWrittenCards) {
+      ls.print("written/predicted: %zu/%zu, ",
+               num_written_cards,
+               _threads_needed.predicted_written_cards_at_next_gc());
+    }
+    ls.print("dirty/predicted: %zu/%zu, time: %1.2fms",
+             num_dirty_cards,
+             _threads_needed.predicted_dirty_cards_at_next_gc(),
+             _threads_needed.predicted_time_until_next_gc_ms());
+  }
   // Activate newly wanted threads.  The current thread is the primary
   // refinement thread, so is already active.
   for (uint i = MAX2(old_wanted, 1u); i < new_wanted; ++i) {
@@ -374,7 +411,7 @@ void G1ConcurrentRefine::adjust_threads_wanted(size_t available_bytes) {
       // Failed to allocate and activate thread.  Stop trying to activate, and
       // instead use mutator threads to make up the gap.
       Atomic::store(&_threads_wanted, i);
-      _dcqs.set_mutator_refinement_threshold(_pending_cards_target);
+      update_mutator_refinement_threshold(_pending_cards_target);
       break;
     }
   }
@@ -391,8 +428,18 @@ void G1ConcurrentRefine::reduce_threads_wanted() {
     // the target has been reached, this keeps the number of pending cards on
     // target even as refinement threads deactivate in the meantime.
     if (is_in_last_adjustment_period()) {
-      _dcqs.set_mutator_refinement_threshold(_pending_cards_target);
+      update_mutator_refinement_threshold(_pending_cards_target);
     }
+  }
+}
+
+void G1ConcurrentRefine::maybe_reduce_threads_wanted() {
+  assert_current_thread_is_primary_refinement_thread();
+  assert(G1DeferDirtyingWrittenCards, "precondition");
+  if ((Atomic::load(&_threads_wanted) > 1u) &&
+      (_wcqs.num_cards() < _threads_needed.written_cards_deactivation_threshold()) &&
+      (_dcqs.num_cards() < _pending_cards_target)) {
+    reduce_threads_wanted();
   }
 }
 

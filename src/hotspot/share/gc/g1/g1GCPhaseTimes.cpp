@@ -53,6 +53,7 @@ G1GCPhaseTimes::G1GCPhaseTimes(STWGCTimer* gc_timer, uint max_gc_threads) :
 
   _gc_par_phases[RetireTLABsAndFlushLogs] = new WorkerDataArray<double>("RetireTLABsAndFlushLogs", "JT Retire TLABs And Flush Logs (ms):", max_gc_threads);
   _gc_par_phases[NonJavaThreadFlushLogs] = new WorkerDataArray<double>("NonJavaThreadFlushLogs", "Non-JT Flush Logs (ms):", max_gc_threads);
+  _gc_par_phases[ConcurrentRefineThreadFlushLogs] = new WorkerDataArray<double>("ConcurrentRefineThreadFlushLogs", "Concurrent Refine Flush Logs (ms):", max_gc_threads);
 
   _gc_par_phases[GCWorkerStart] = new WorkerDataArray<double>("GCWorkerStart", "GC Worker Start (ms):", max_gc_threads);
   _gc_par_phases[ExtRootScan] = new WorkerDataArray<double>("ExtRootScan", "Ext Root Scanning (ms):", max_gc_threads);
@@ -428,6 +429,7 @@ double G1GCPhaseTimes::print_pre_evacuate_collection_set() const {
   debug_time("Pre Evacuate Prepare", _cur_pre_evacuate_prepare_time_ms);
   debug_phase(_gc_par_phases[RetireTLABsAndFlushLogs], 1);
   debug_phase(_gc_par_phases[NonJavaThreadFlushLogs], 1);
+  debug_phase(_gc_par_phases[ConcurrentRefineThreadFlushLogs], 1);
   debug_time("Choose Collection Set", (_recorded_young_cset_choice_time_ms + _recorded_non_young_cset_choice_time_ms));
   debug_time("Region Register", _cur_region_register_time);
 

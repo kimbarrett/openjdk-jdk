@@ -50,6 +50,7 @@ class G1CollectionCandidateList;
 class G1CollectionSetCandidates;
 class G1CollectionSetChooser;
 class G1CollectionCandidateRegionList;
+class G1ConcurrentRefineStats;
 class G1IHOPControl;
 class G1Analytics;
 class G1SurvivorRegions;
@@ -394,10 +395,8 @@ public:
   void transfer_survivors_to_cset(const G1SurvivorRegions* survivors);
 
   // Record and log stats and pending cards before not-full collection.
-  // thread_buffer_cards is the number of cards that were in per-thread
-  // buffers.  pending_cards includes thread_buffer_cards.
-  void record_concurrent_refinement_stats(size_t pending_cards,
-                                          size_t thread_buffer_cards);
+  void record_concurrent_refinement_stats(const G1ConcurrentRefineStats& mutator_stats,
+                                          const G1ConcurrentRefineStats& flushlogs_stats);
 
   bool should_retain_evac_failed_region(HeapRegion* r) const {
     return should_retain_evac_failed_region(r->hrm_index());

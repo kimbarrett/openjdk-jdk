@@ -26,6 +26,7 @@
 #include "gc/g1/g1BarrierSet.inline.hpp"
 #include "gc/g1/g1BarrierSetRuntime.hpp"
 #include "gc/g1/g1ThreadLocalData.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "utilities/macros.hpp"
 
@@ -63,4 +64,40 @@ JRT_LEAF(void, G1BarrierSetRuntime::write_ref_field_post_entry(volatile G1CardTa
   G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thread);
   G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
   G1BarrierSet::dirty_card_queue_set().enqueue(queue, card_addr, stats);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_inline_none(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_inline_none(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_inline_previous(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_inline_previous(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_inline_young(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_inline_young(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_indirect_none(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_indirect_none(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_indirect_previous(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_indirect_previous(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_indirect_young(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_indirect_young(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_deferred_none(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_deferred_none(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_deferred_previous(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_deferred_previous(thread);
+JRT_END
+
+JRT_LEAF(void, G1BarrierSetRuntime::handle_full_written_queue_deferred_young(Thread* thread))
+  G1WrittenCardQueueSet::handle_full_buffer_deferred_young(thread);
 JRT_END

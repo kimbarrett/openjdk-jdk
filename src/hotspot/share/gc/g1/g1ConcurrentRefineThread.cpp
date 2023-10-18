@@ -28,8 +28,11 @@
 #include "gc/g1/g1ConcurrentRefineStats.hpp"
 #include "gc/g1/g1ConcurrentRefineThread.hpp"
 #include "gc/g1/g1DirtyCardQueue.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
+#include "gc/shared/gc_globals.hpp"
 #include "gc/shared/suspendibleThreadSet.hpp"
 #include "logging/log.hpp"
+#include "logging/logStream.hpp"
 #include "runtime/cpuTimeCounters.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/os.hpp"
@@ -45,6 +48,7 @@ G1ConcurrentRefineThread::G1ConcurrentRefineThread(G1ConcurrentRefine* cr, uint 
   _vtime_accum(0.0),
   _notifier(Mutex::nosafepoint, FormatBuffer<>("G1 Refine#%d", worker_id), true),
   _requested_active(false),
+  _dirty_card_queue(&G1BarrierSet::dirty_card_queue_set()),
   _refinement_stats(),
   _worker_id(worker_id),
   _cr(cr)
@@ -82,21 +86,39 @@ void G1ConcurrentRefineThread::run_service() {
 }
 
 void G1ConcurrentRefineThread::report_active(const char* reason) const {
-  log_trace(gc, refine)("%s worker %u, current: %zu",
-                        reason,
-                        _worker_id,
-                        G1BarrierSet::dirty_card_queue_set().num_cards());
+  LogTarget(Trace, gc, refine) lt{};
+  if (lt.is_enabled()) {
+    LogStream ls{lt};
+    ls.print("%s worker %u, dirty: %zu",
+             reason,
+             _worker_id,
+             G1BarrierSet::dirty_card_queue_set().num_cards());
+    if (G1DeferDirtyingWrittenCards) {
+      ls.print(", written: %zu", G1BarrierSet::written_card_queue_set().num_cards());
+    }
+  }
 }
 
 void G1ConcurrentRefineThread::report_inactive(const char* reason,
                                                const G1ConcurrentRefineStats& stats) const {
-  log_trace(gc, refine)
-           ("%s worker %u, cards: %zu, refined %zu, rate %1.2fc/ms",
-            reason,
-            _worker_id,
-            G1BarrierSet::dirty_card_queue_set().num_cards(),
-            stats.refined_cards(),
-            stats.refinement_rate_ms());
+  LogTarget(Trace, gc, refine) lt{};
+  if (lt.is_enabled()) {
+    LogStream ls{lt};
+    ls.print("%s worker %u, dirty: %zu, refined: %zu/%zu, rate %1.2fc/ms",
+             reason,
+             _worker_id,
+             G1BarrierSet::dirty_card_queue_set().num_cards(),
+             stats.refined_cards(),
+             stats.precleaned_cards(),
+             stats.refinement_rate_ms());
+    if (G1DeferDirtyingWrittenCards) {
+      ls.print(", written: %zu, processed %zu/%zu, rate %1.2fc/ms",
+               G1BarrierSet::written_card_queue_set().num_cards(),
+               stats.written_cards_dirtied(),
+               stats.written_cards_filtered(),
+               stats.written_cards_processing_rate_ms());
+    }
+  }
 }
 
 void G1ConcurrentRefineThread::activate() {
@@ -120,8 +142,20 @@ bool G1ConcurrentRefineThread::maybe_deactivate() {
   }
 }
 
+bool G1ConcurrentRefineThread::try_dirtying_step() {
+  if (G1DeferDirtyingWrittenCards) {
+    Ticks start_time = Ticks::now();
+    G1WrittenCardQueueSet& wcqs = G1BarrierSet::written_card_queue_set();
+    if (wcqs.mark_cards_dirty(_dirty_card_queue, _refinement_stats)) {
+      // Only record time if we actually did some processing.
+      _refinement_stats.inc_written_cards_processing_time(Ticks::now() - start_time);
+      return true;
+    }
+  }
+  return false;
+}
+
 bool G1ConcurrentRefineThread::try_refinement_step(size_t stop_at) {
-  assert(this == Thread::current(), "precondition");
   return _cr->try_refinement_step(_worker_id, stop_at, _refinement_stats);
 }
 
@@ -172,8 +206,10 @@ void G1PrimaryConcurrentRefineThread::do_refinement_step() {
   // blocked. In that case we *do* try refinement, rather than possibly
   // uselessly spinning while waiting for adjustment to succeed.
   if (!cr()->adjust_threads_periodically()) {
-    // No adjustment, so try refinement, with the target as a cuttoff.
-    if (!try_refinement_step(cr()->pending_cards_target())) {
+    // No adjustment, so try to process some cards.
+    if (try_dirtying_step()) {
+      cr()->maybe_reduce_threads_wanted();
+    } else if (!try_refinement_step(cr()->pending_cards_target())) {
       // Refinement was cut off, so proceed with fewer threads.
       cr()->reduce_threads_wanted();
     }
@@ -212,6 +248,7 @@ bool G1SecondaryConcurrentRefineThread::wait_for_completed_buffers() {
 
 void G1SecondaryConcurrentRefineThread::do_refinement_step() {
   assert(this == Thread::current(), "precondition");
+  // FIXME comments
   // Secondary threads ignore the target and just drive the number of pending
   // dirty cards down.  The primary thread is responsible for noticing the
   // target has been reached and reducing the number of wanted threads.  This
@@ -219,7 +256,9 @@ void G1SecondaryConcurrentRefineThread::do_refinement_step() {
   // useless spinning by secondary threads until the primary thread notices.
   // (Useless spinning is still possible if there are no pending cards, but
   // that should rarely happen.)
-  try_refinement_step(0);
+  if (!try_dirtying_step()) {
+    try_refinement_step(0);
+  }
 }
 
 G1ConcurrentRefineThread*

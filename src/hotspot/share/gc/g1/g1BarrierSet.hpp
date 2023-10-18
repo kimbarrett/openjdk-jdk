@@ -27,6 +27,7 @@
 
 #include "gc/g1/g1DirtyCardQueue.hpp"
 #include "gc/g1/g1SATBMarkQueueSet.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "gc/shared/cardTable.hpp"
 #include "gc/shared/cardTableBarrierSet.hpp"
 #include "gc/shared/bufferNode.hpp"
@@ -40,8 +41,10 @@ class G1BarrierSet: public CardTableBarrierSet {
   friend class VMStructs;
  private:
   BufferNode::Allocator _satb_mark_queue_buffer_allocator;
+  BufferNode::Allocator _written_card_queue_buffer_allocator;
   BufferNode::Allocator _dirty_card_queue_buffer_allocator;
   G1SATBMarkQueueSet _satb_mark_queue_set;
+  G1WrittenCardQueueSet _written_card_queue_set;
   G1DirtyCardQueueSet _dirty_card_queue_set;
 
   static G1BarrierSet* g1_barrier_set() {
@@ -91,9 +94,19 @@ class G1BarrierSet: public CardTableBarrierSet {
     return g1_barrier_set()->_satb_mark_queue_set;
   }
 
+  static G1WrittenCardQueueSet& written_card_queue_set() {
+    return g1_barrier_set()->_written_card_queue_set;
+  }
+
   static G1DirtyCardQueueSet& dirty_card_queue_set() {
     return g1_barrier_set()->_dirty_card_queue_set;
   }
+
+  static BufferNode::Allocator& written_card_queue_buffer_allocator() {
+    return g1_barrier_set()->_written_card_queue_buffer_allocator;
+  }
+
+  static void abandon_post_barrier_logs_and_stats();
 
   // Callbacks for runtime accesses.
   template <DecoratorSet decorators, typename BarrierSetT = G1BarrierSet>

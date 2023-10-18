@@ -304,6 +304,7 @@ void G1DirtyCardQueueSet::enqueue_previous_paused_buffers() {
 void G1DirtyCardQueueSet::enqueue_all_paused_buffers() {
   assert_at_safepoint();
   enqueue_paused_buffers_aux(_paused.take_all());
+  verify_num_cards();
 }
 
 void G1DirtyCardQueueSet::abandon_completed_buffers() {
@@ -330,7 +331,6 @@ void G1DirtyCardQueueSet::merge_bufferlists(G1RedirtyCardsQueueSet* src) {
 
 BufferNodeList G1DirtyCardQueueSet::take_all_completed_buffers() {
   enqueue_all_paused_buffers();
-  verify_num_cards();
   Pair<BufferNode*, BufferNode*> pair = _completed.take_all();
   size_t num_cards = Atomic::load(&_num_cards);
   Atomic::store(&_num_cards, size_t(0));
@@ -477,7 +477,10 @@ void G1DirtyCardQueueSet::handle_refined_buffer(BufferNode* node,
 void G1DirtyCardQueueSet::handle_completed_buffer(BufferNode* new_node,
                                                   G1ConcurrentRefineStats& stats) {
   enqueue_completed_buffer(new_node);
+  mutator_refine_completed_buffer(stats);
+}
 
+void G1DirtyCardQueueSet::mutator_refine_completed_buffer(G1ConcurrentRefineStats& stats) {
   // No need for mutator refinement if number of cards is below limit.
   if (Atomic::load(&_num_cards) <= Atomic::load(&_mutator_refinement_threshold)) {
     return;
@@ -523,24 +526,11 @@ bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id,
   return true;
 }
 
-void G1DirtyCardQueueSet::abandon_logs_and_stats() {
+void G1DirtyCardQueueSet::abandon_completed_buffers_and_stats() {
   assert_at_safepoint();
 
   // Disable mutator refinement until concurrent refinement decides otherwise.
   set_mutator_refinement_threshold(SIZE_MAX);
-
-  // Iterate over all the threads, resetting per-thread queues and stats.
-  struct AbandonThreadLogClosure : public ThreadClosure {
-    G1DirtyCardQueueSet& _qset;
-    AbandonThreadLogClosure(G1DirtyCardQueueSet& qset) : _qset(qset) {}
-    virtual void do_thread(Thread* t) {
-      G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(t);
-      G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(t);
-      _qset.reset_queue(queue);
-      stats.reset();
-    }
-  } closure(*this);
-  Threads::threads_do(&closure);
 
   enqueue_all_paused_buffers();
   abandon_completed_buffers();
@@ -550,44 +540,22 @@ void G1DirtyCardQueueSet::abandon_logs_and_stats() {
   _detached_refinement_stats.reset();
 }
 
-void G1DirtyCardQueueSet::update_refinement_stats(G1ConcurrentRefineStats& stats) {
-  assert_at_safepoint();
-
-  _concatenated_refinement_stats = stats;
-
-  enqueue_all_paused_buffers();
-  verify_num_cards();
-
-  // Collect and reset stats from detached threads.
-  MutexLocker ml(G1DetachedRefinementStats_lock, Mutex::_no_safepoint_check_flag);
-  _concatenated_refinement_stats += _detached_refinement_stats;
-  _detached_refinement_stats.reset();
-}
-
-G1ConcurrentRefineStats G1DirtyCardQueueSet::concatenate_log_and_stats(Thread* thread) {
-  assert_at_safepoint();
-
-  G1DirtyCardQueue& queue = G1ThreadLocalData::dirty_card_queue(thread);
-  G1ConcurrentRefineStats& stats = G1ThreadLocalData::refinement_stats(thread);
-  // Flush the buffer if non-empty.  Flush before accumulating and
-  // resetting stats, since flushing may modify the stats.
-  if (!queue.is_empty()) {
-    flush_queue(queue, stats);
-  }
-  G1ConcurrentRefineStats result = stats;
-  stats.reset();
-  return result;
-}
-
-G1ConcurrentRefineStats G1DirtyCardQueueSet::concatenated_refinement_stats() const {
-  assert_at_safepoint();
-  return _concatenated_refinement_stats;
+void G1DirtyCardQueueSet::reset_queue(G1DirtyCardQueue& queue) {
+  PtrQueueSet::reset_queue(queue);
 }
 
 void G1DirtyCardQueueSet::record_detached_refinement_stats(G1ConcurrentRefineStats& stats) {
   MutexLocker ml(G1DetachedRefinementStats_lock, Mutex::_no_safepoint_check_flag);
   _detached_refinement_stats += stats;
   stats.reset();
+}
+
+G1ConcurrentRefineStats G1DirtyCardQueueSet::get_and_reset_detached_refinement_stats() {
+  assert_at_safepoint();
+  MutexLocker ml(G1DetachedRefinementStats_lock, Mutex::_no_safepoint_check_flag);
+  G1ConcurrentRefineStats result = _detached_refinement_stats;
+  _detached_refinement_stats.reset();
+  return result;
 }
 
 size_t G1DirtyCardQueueSet::mutator_refinement_threshold() const {

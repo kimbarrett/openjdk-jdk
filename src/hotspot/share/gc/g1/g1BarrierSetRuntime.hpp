@@ -46,6 +46,18 @@ public:
   // C2 slow-path runtime calls.
   static void write_ref_field_pre_entry(oopDesc* orig, JavaThread *thread);
   static void write_ref_field_post_entry(volatile CardValue* card_addr, JavaThread* thread);
+
+  static void handle_full_written_queue_inline_none(Thread* thread);
+  static void handle_full_written_queue_inline_previous(Thread* thread);
+  static void handle_full_written_queue_inline_young(Thread* thread);
+
+  static void handle_full_written_queue_indirect_none(Thread* thread);
+  static void handle_full_written_queue_indirect_previous(Thread* thread);
+  static void handle_full_written_queue_indirect_young(Thread* thread);
+
+  static void handle_full_written_queue_deferred_none(Thread* thread);
+  static void handle_full_written_queue_deferred_previous(Thread* thread);
+  static void handle_full_written_queue_deferred_young(Thread* thread);
 };
 
 #endif // SHARE_GC_G1_G1BARRIERSETRUNTIME_HPP

@@ -171,7 +171,7 @@
   product(bool, G1UseWrittenCardQueues, false, EXPERIMENTAL,                \
           "Use written card queues before dirty card queues")               \
                                                                             \
-  product(bool, G1UseInlineWrittenCardQueues, false, EXPERIMENTAL,          \
+  product(bool, G1UseInlineWrittenCardBuffers, false, EXPERIMENTAL,         \
           "Inline a written cards queue's buffer in the queue. "            \
           "Ignored if G1UseWrittenCardQueues is false.")                    \
                                                                             \
@@ -179,12 +179,12 @@
           "When using written card queues, mutator threads should defer "   \
           "marking the cards dirty, leaving that to refinement threads. "   \
           "Ignored if G1UseWrittenCardQueues is false or "                  \
-          "G1UseInlineWrittenCardQueues is true.")                          \
+          "G1UseInlineWrittenCardBuffers is true.")                         \
                                                                             \
-  product(size_t, G1WrittenCardBufferSize, 500, EXPERIMENTAL,               \
+  product(size_t, G1WrittenCardBufferSize, 250, EXPERIMENTAL,               \
           "Size of a written card queue buffer.  Ignored if "               \
           "G1UseWrittenCardQueues is false or "                             \
-          "G1UseInlineWrittenCardQueues is true.")                          \
+          "G1UseInlineWrittenCardBuffers is true.")                         \
           constraint(G1WrittenCardBufferSizeConstraintFunc, AtParse)        \
                                                                             \
   product(uint, G1WrittenCardFilter, 0, EXPERIMENTAL,                       \

@@ -29,6 +29,7 @@
 #include "gc/g1/g1BarrierSetRuntime.hpp"
 #include "gc/g1/g1CardTable.hpp"
 #include "gc/g1/g1ThreadLocalData.hpp"
+#include "gc/g1/g1WrittenCardQueue.hpp"
 #include "gc/g1/heapRegion.hpp"
 #include "interpreter/interp_masm.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -275,9 +276,6 @@ void G1BarrierSetAssembler::g1_write_barrier_post(MacroAssembler* masm,
   assert(thread == r15_thread, "must be");
 #endif // _LP64
 
-  Address queue_index(thread, in_bytes(G1ThreadLocalData::dirty_card_queue_index_offset()));
-  Address buffer(thread, in_bytes(G1ThreadLocalData::dirty_card_queue_buffer_offset()));
-
   CardTableBarrierSet* ct =
     barrier_set_cast<CardTableBarrierSet>(BarrierSet::barrier_set());
 
@@ -296,7 +294,115 @@ void G1BarrierSetAssembler::g1_write_barrier_post(MacroAssembler* masm,
   __ cmpptr(new_val, NULL_WORD);
   __ jcc(Assembler::equal, done);
 
-  // storing region crossing non-null, is card already dirty?
+  // storing region crossing non-null.
+
+  if (G1UseWrittenCardQueues) {
+    using Filter = G1WrittenCardQueue::Filter;
+
+    // FIXME: We "know" that store_addr is a temporary register in the caller,
+    // so we can clobber it here if needed to resolve it to the value to be
+    // stored in the queue.
+    Register queue_value = store_addr;
+    switch (G1WrittenCardQueue::filter_mechanism()) {
+    case Filter::None:
+      break;
+
+    case Filter::Young: {
+      const Register cardtable = tmp2;
+      __ shrptr(queue_value, CardTable::card_shift());
+      // Do not use ExternalAddress to load 'byte_map_base', since
+      // 'byte_map_base' is NOT a valid address and therefore is not properly
+      // handled by the relocation code.
+      __ movptr(cardtable, (intptr_t)ct->card_table()->byte_map_base());
+      __ addptr(queue_value, cardtable);
+      __ cmpb(Address(queue_value, 0), G1CardTable::g1_young_card_val());
+      __ jcc(Assembler::equal, done);
+      break;
+    }
+
+    case Filter::Previous: {
+      __ shrptr(queue_value, CardTable::card_shift());
+      break;
+    }
+
+    default:
+      ShouldNotReachHere();
+    }
+
+    Address queue_index_addr{thread, in_bytes(G1ThreadLocalData::written_card_queue_index_offset())};
+    Register queue_index = tmp;
+    __ movptr(queue_index, queue_index_addr);
+
+    Address entry_addr;
+    if (G1UseInlineWrittenCardBuffers) {
+      entry_addr = Address(thread,
+                           queue_index,
+                           Address::times_1,
+                           in_bytes(G1ThreadLocalData::written_card_queue_inline_buffer_offset()));
+    } else {
+      Address buffer_addr{thread, in_bytes(G1ThreadLocalData::written_card_queue_indirect_buffer_offset())};
+      __ movptr(tmp2, buffer_addr);
+      entry_addr = Address(tmp2, queue_index);
+    }
+
+    if (G1WrittenCardQueue::filter_mechanism() == Filter::Previous) {
+      __ cmpptr(queue_value, entry_addr);
+      __ jcc(Assembler::equal, done);
+    }
+
+    __ subptr(queue_index, wordSize); // Sets cc for zero/nonzero test below.
+    __ movptr(queue_index_addr, queue_index);
+    __ movptr(entry_addr, queue_value);
+    __ jcc(Assembler::notZero, done);
+
+    // Queue index is zero, indicating buffer is full.  Process the buffer.
+    void (*handler)(Thread*);
+    switch (G1WrittenCardQueue::filter_mechanism()) {
+    case Filter::None:
+      if (G1UseInlineWrittenCardBuffers) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_inline_none;
+      } else if (G1DeferDirtyingWrittenCards) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_deferred_none;
+      } else {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_indirect_none;
+      }
+      break;
+
+    case Filter::Previous:
+      if (G1UseInlineWrittenCardBuffers) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_inline_previous;
+      } else if (G1DeferDirtyingWrittenCards) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_deferred_previous;
+      } else {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_indirect_previous;
+      }
+      break;
+
+    case Filter::Young:
+      if (G1UseInlineWrittenCardBuffers) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_inline_young;
+      } else if (G1DeferDirtyingWrittenCards) {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_deferred_young;
+      } else {
+        handler = G1BarrierSetRuntime::handle_full_written_queue_indirect_young;
+      }
+      break;
+
+    default:
+      ShouldNotReachHere();
+    }
+    NOT_LP64(RegSet saved = RegSet::of(thread);)
+    NOT_LP64(__ push_set(saved);)
+    __ call_VM_leaf(CAST_FROM_FN_PTR(address, handler), thread);
+    NOT_LP64(__ pop_set(saved);)
+    __ bind(done);
+    return;
+  }
+
+  // Using dirty card queue directly.
+
+  Address queue_index(thread, in_bytes(G1ThreadLocalData::dirty_card_queue_index_offset()));
+  Address buffer(thread, in_bytes(G1ThreadLocalData::dirty_card_queue_buffer_offset()));
 
   const Register card_addr = tmp;
   const Register cardtable = tmp2;

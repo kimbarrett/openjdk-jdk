@@ -74,6 +74,9 @@ G1Analytics::G1Analytics(const G1Predictions* predictor) :
     _concurrent_mark_cleanup_times_ms(NumPrevPausesForHeuristics),
     _alloc_rate_ms_seq(TruncatedSeqLength),
     _prev_collection_pause_end_ms(0.0),
+    _concurrent_dirtying_rate_ms_seq(TruncatedSeqLength),
+    _written_cards_rate_ms_seq(TruncatedSeqLength),
+    _written_cards_in_thread_buffers_seq(TruncatedSeqLength),
     _concurrent_refine_rate_ms_seq(TruncatedSeqLength),
     _dirtied_cards_rate_ms_seq(TruncatedSeqLength),
     _dirtied_cards_in_thread_buffers_seq(TruncatedSeqLength),
@@ -97,6 +100,8 @@ G1Analytics::G1Analytics(const G1Predictions* predictor) :
   _prev_collection_pause_end_ms = os::elapsedTime() * 1000.0;
 
   uint index = MIN2(ParallelGCThreads - 1, 7u);
+
+  // Start with no data for written cards.
 
   // Start with inverse of maximum STW cost.
   _concurrent_refine_rate_ms_seq.add(1/cost_per_logged_card_ms_defaults[0]);
@@ -169,6 +174,18 @@ void G1Analytics::compute_pause_time_ratios(double end_time_sec, double pause_ti
   _short_term_pause_time_ratio = clamp(_short_term_pause_time_ratio, 0.0, 1.0);
 }
 
+void G1Analytics::report_concurrent_dirtying_rate_ms(double cards_per_ms) {
+  _concurrent_dirtying_rate_ms_seq.add(cards_per_ms);
+}
+
+void G1Analytics::report_written_cards_rate_ms(double cards_per_ms) {
+  _written_cards_rate_ms_seq.add(cards_per_ms);
+}
+
+void G1Analytics::report_written_cards_in_thread_buffers(size_t cards) {
+  _written_cards_in_thread_buffers_seq.add(double(cards));
+}
+
 void G1Analytics::report_concurrent_refine_rate_ms(double cards_per_ms) {
   _concurrent_refine_rate_ms_seq.add(cards_per_ms);
 }
@@ -231,6 +248,18 @@ double G1Analytics::predict_alloc_rate_ms() const {
   } else {
     return 0.0;
   }
+}
+
+double G1Analytics::predict_concurrent_dirtying_rate_ms() const {
+  return predict_zero_bounded(&_concurrent_dirtying_rate_ms_seq);
+}
+
+double G1Analytics::predict_written_cards_rate_ms() const {
+  return predict_zero_bounded(&_written_cards_rate_ms_seq);
+}
+
+size_t G1Analytics::predict_written_cards_in_thread_buffers() const {
+  return predict_size(&_written_cards_in_thread_buffers_seq);
 }
 
 double G1Analytics::predict_concurrent_refine_rate_ms() const {

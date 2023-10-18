@@ -38,8 +38,13 @@ class G1ConcurrentRefineThreadsNeeded : public CHeapObj<mtGC> {
   G1Policy* _policy;
   double _update_period_ms;
   double _predicted_time_until_next_gc_ms;
-  size_t _predicted_cards_at_next_gc;
+  size_t _predicted_written_cards_at_next_gc;
+  size_t _predicted_dirty_cards_at_next_gc;
+  size_t _written_cards_deactivation_threshold;
   uint _threads_needed;
+
+  size_t predict_cards_at_next_gc(size_t num_cards, double incoming_rate_ms) const;
+  double estimate_threads_needed(size_t num_cards, double processing_rate_ms) const;
 
 public:
   G1ConcurrentRefineThreadsNeeded(G1Policy* policy, double update_period_ms);
@@ -48,8 +53,9 @@ public:
   // target before the next GC.
   void update(uint active_threads,
               size_t available_bytes,
-              size_t num_cards,
-              size_t target_num_cards);
+              size_t num_written_cards,
+              size_t num_dirty_cards,
+              size_t target_num_dirty_cards);
 
   // Estimate of the number of active refinement threads needed to reach the
   // target before the next GC.
@@ -60,10 +66,24 @@ public:
     return _predicted_time_until_next_gc_ms;
   }
 
-  // Estimate of the number of pending cards at the next GC if no further
-  // refinement is performed.
-  size_t predicted_cards_at_next_gc() const {
-    return _predicted_cards_at_next_gc;
+  // Estimate of the number of pending written cards at the next GC if
+  // no further dirtying is performed.  Only used when
+  // G1DeferDirtyingWrittenCards is true.
+  size_t predicted_written_cards_at_next_gc() const {
+    return _predicted_written_cards_at_next_gc;
+  }
+
+  // Estimate of the number of pending dirty cards at the next GC if
+  // no further refinement is performed.
+  size_t predicted_dirty_cards_at_next_gc() const {
+    return _predicted_dirty_cards_at_next_gc;
+  }
+
+  // Thread controller should avoid deactivating threads if there are more
+  // than this many pending.  Only used when G1DeferDirtyingWrittenCards is
+  // true.
+  size_t written_cards_deactivation_threshold() const {
+    return _written_cards_deactivation_threshold;
   }
 };
 

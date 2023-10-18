@@ -605,57 +605,91 @@ void G1Policy::record_full_collection_end() {
 }
 
 static void log_refinement_stats(const char* kind, const G1ConcurrentRefineStats& stats) {
-  log_debug(gc, refine, stats)
-           ("%s refinement: %.2fms, refined: " SIZE_FORMAT
-            ", precleaned: " SIZE_FORMAT ", dirtied: " SIZE_FORMAT,
-            kind,
-            stats.refinement_time().seconds() * MILLIUNITS,
-            stats.refined_cards(),
-            stats.precleaned_cards(),
-            stats.dirtied_cards());
+  LogTarget(Debug, gc, refine, stats) lt;
+  if (lt.is_enabled()) {
+    LogStream ls(lt);
+    ls.print("%s refinement: %.2fms, dirtied: %zu, refined: %zu/%zu",
+             kind,
+             stats.refinement_time().seconds() * MILLIUNITS,
+             stats.dirtied_cards(),
+             stats.refined_cards(),
+             stats.precleaned_cards());
+    if (G1UseWrittenCardQueues) {
+      ls.print(", dirtying: %.2fms, written: %zu, processed: %zu/%zu",
+               stats.written_cards_processing_time().seconds() * MILLIUNITS,
+               stats.written_cards(),
+               stats.written_cards_dirtied(),
+               stats.written_cards_filtered());
+    }
+    ls.cr();
+  }
 }
 
-void G1Policy::record_concurrent_refinement_stats(size_t pending_cards,
-                                                  size_t thread_buffer_cards) {
-  _pending_cards_at_gc_start = pending_cards;
-  _analytics->report_dirtied_cards_in_thread_buffers(thread_buffer_cards);
-
-  // Collect per-thread stats, mostly from mutator activity.
+void G1Policy::record_concurrent_refinement_stats(const G1ConcurrentRefineStats& mutator_stats,
+                                                  const G1ConcurrentRefineStats& flushlogs_stats) {
   G1DirtyCardQueueSet& dcqs = G1BarrierSet::dirty_card_queue_set();
-  G1ConcurrentRefineStats mut_stats = dcqs.concatenated_refinement_stats();
 
-  // Collect specialized concurrent refinement thread stats.
-  G1ConcurrentRefine* cr = _g1h->concurrent_refine();
-  G1ConcurrentRefineStats cr_stats = cr->get_and_reset_refinement_stats();
+  _pending_cards_at_gc_start = dcqs.num_cards();
+  _analytics->report_dirtied_cards_in_thread_buffers(flushlogs_stats.dirtied_cards());
 
-  G1ConcurrentRefineStats total_stats = mut_stats + cr_stats;
+  G1ConcurrentRefineStats cr_stats =
+    G1CollectedHeap::heap()->concurrent_refine()->get_and_reset_refinement_stats();
 
-  log_refinement_stats("Mutator", mut_stats);
+  G1ConcurrentRefineStats total_stats = mutator_stats + flushlogs_stats + cr_stats;
+
+  log_refinement_stats("Mutator", mutator_stats);
+  log_refinement_stats("FlushLogs", flushlogs_stats);
   log_refinement_stats("Concurrent", cr_stats);
   log_refinement_stats("Total", total_stats);
 
+  // Record the rate at which cards are marked dirty.
+  // Don't update the rate if the current sample is empty or time is zero.
+  // Only the concurrent refinement threads collect timing info.
+  if (G1DeferDirtyingWrittenCards) {
+    Tickspan processing_time = cr_stats.written_cards_processing_time();
+    size_t cards = cr_stats.written_cards_processed();
+    if ((cards > 0) && (processing_time > Tickspan())) {
+      double rate = cards / (processing_time.seconds() * MILLIUNITS);
+      _analytics->report_concurrent_dirtying_rate_ms(rate);
+      log_debug(gc, refine, stats)
+               ("Concurrent written card processing rate: %.2f cards/ms", rate);
+    }
+  }
+
   // Record the rate at which cards were refined.
   // Don't update the rate if the current sample is empty or time is zero.
+  // Refinement time includes time for precleaning, and dcqs.num_cards()
+  // includes cards that will be precleaned rather than actually refined,
+  // hence we include precleaning count in the refinement rate calculation.
   Tickspan refinement_time = total_stats.refinement_time();
-  size_t refined_cards = total_stats.refined_cards();
+  size_t refined_cards = total_stats.refined_cards() + total_stats.precleaned_cards();
   if ((refined_cards > 0) && (refinement_time > Tickspan())) {
     double rate = refined_cards / (refinement_time.seconds() * MILLIUNITS);
     _analytics->report_concurrent_refine_rate_ms(rate);
     log_debug(gc, refine, stats)("Concurrent refinement rate: %.2f cards/ms", rate);
   }
 
-  // Record mutator's card logging rate.
+  // Record mutator card logging rates.
   double mut_start_time = _analytics->prev_collection_pause_end_ms();
   double mut_end_time = phase_times()->cur_collection_start_sec() * MILLIUNITS;
   double mut_time = mut_end_time - mut_start_time;
   // Unlike above for conc-refine rate, here we should not require a
   // non-empty sample, since an application could go some time with only
-  // young-gen or filtered out writes.  But we'll ignore unusually short
-  // sample periods, as they may just pollute the predictions.
-  if (mut_time > 1.0) {   // Require > 1ms sample time.
-    double dirtied_rate = total_stats.dirtied_cards() / mut_time;
-    _analytics->report_dirtied_cards_rate_ms(dirtied_rate);
-    log_debug(gc, refine, stats)("Generate dirty cards rate: %.2f cards/ms", dirtied_rate);
+  // filtered out writes.  But we'll ignore unusually short sample periods,
+  // as they may just pollute the predictions.
+  if (mut_time > 1.0) {         // Require > 1ms sample time.
+    // Record mutator's written card logging rate.
+    if (G1DeferDirtyingWrittenCards) {
+      double rate = total_stats.written_cards() / mut_time;
+      _analytics->report_written_cards_rate_ms(rate);
+      log_debug(gc, refine, stats)("Generate written cards rate: %.2f cards/ms", rate);
+    }
+    // Record mutator's dirty card logging rate.
+    {
+      double rate = total_stats.dirtied_cards() / mut_time;
+      _analytics->report_dirtied_cards_rate_ms(rate);
+      log_debug(gc, refine, stats)("Generate dirty cards rate: %.2f cards/ms", rate);
+    }
   }
 }
 

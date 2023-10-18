@@ -26,6 +26,7 @@
 #define SHARE_GC_G1_G1CONCURRENTREFINETHREAD_HPP
 
 #include "gc/g1/g1ConcurrentRefineStats.hpp"
+#include "gc/g1/g1DirtyCardQueue.hpp"
 #include "gc/shared/concurrentGCThread.hpp"
 #include "runtime/mutex.hpp"
 #include "utilities/globalDefinitions.hpp"
@@ -45,6 +46,7 @@ class G1ConcurrentRefineThread: public ConcurrentGCThread {
   Monitor _notifier;
   bool _requested_active;
 
+  G1DirtyCardQueue _dirty_card_queue;
   G1ConcurrentRefineStats _refinement_stats;
 
   uint _worker_id;
@@ -81,6 +83,12 @@ protected:
     }
   };
 
+  // Helper for do_refinement_step implementations.  Try to mark some written
+  // cards dirty if G1DeferDirtyingWrittenCards is true.  Returns true if any
+  // written cards were processed, false otherwise.
+  // precondition: this is the current thread.
+  bool try_dirtying_step();
+
   // Helper for do_refinement_step implementations.  Try to perform some
   // refinement work, limited by stop_at.  Returns true if any refinement work
   // was performed, false if no work available per stop_at.
@@ -104,6 +112,10 @@ public:
   // Activate this thread.
   // precondition: this is not the current thread.
   void activate();
+
+  G1DirtyCardQueue& dirty_card_queue() {
+    return _dirty_card_queue;
+  }
 
   G1ConcurrentRefineStats* refinement_stats() {
     return &_refinement_stats;
