@@ -47,6 +47,7 @@
                                                       \
   /* G1 PtrQueue buffer size constraints */           \
   f(size_t, G1SATBBufferSizeConstraintFunc)           \
+  f(size_t, G1WrittenCardBufferSizeConstraintFunc)    \
   f(size_t, G1UpdateBufferSizeConstraintFunc)         \
   /* */
 

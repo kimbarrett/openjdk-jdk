@@ -168,6 +168,32 @@
           "Size of an update buffer")                                       \
           constraint(G1UpdateBufferSizeConstraintFunc, AtParse)             \
                                                                             \
+  product(bool, G1UseWrittenCardQueues, false, EXPERIMENTAL,                \
+          "Use written card queues before dirty card queues")               \
+                                                                            \
+  product(bool, G1UseInlineWrittenCardQueues, false, EXPERIMENTAL,          \
+          "Inline a written cards queue's buffer in the queue. "            \
+          "Ignored if G1UseWrittenCardQueues is false.")                    \
+                                                                            \
+  product(bool, G1DeferDirtyingWrittenCards, false, EXPERIMENTAL,           \
+          "When using written card queues, mutator threads should defer "   \
+          "marking the cards dirty, leaving that to refinement threads. "   \
+          "Ignored if G1UseWrittenCardQueues is false or "                  \
+          "G1UseInlineWrittenCardQueues is true.")                          \
+                                                                            \
+  product(size_t, G1WrittenCardBufferSize, 500, EXPERIMENTAL,               \
+          "Size of a written card queue buffer.  Ignored if "               \
+          "G1UseWrittenCardQueues is false or "                             \
+          "G1UseInlineWrittenCardQueues is true.")                          \
+          constraint(G1WrittenCardBufferSizeConstraintFunc, AtParse)        \
+                                                                            \
+  product(uint, G1WrittenCardFilter, 0, EXPERIMENTAL,                       \
+          "Specifies filtering to use before adding a card to a written "   \
+          "card queue.  Ignored if G1UseWrittenCardQueues is false. "       \
+          "Values are: 0 - none; 1 - exclude young cards; 2 - exclude "     \
+          "most recently added.")                                           \
+          range(0, 2)                                                       \
+                                                                            \
   product(uint, G1RSetUpdatingPauseTimePercent, 10,                         \
           "A target percentage of time that is allowed to be spend on "     \
           "processing remembered set update buffers during the collection " \

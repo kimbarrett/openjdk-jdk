@@ -206,6 +206,12 @@ JVMFlag::Error G1SATBBufferSizeConstraintFunc(size_t value, bool verbose) {
                                        verbose);
 }
 
+JVMFlag::Error G1WrittenCardBufferSizeConstraintFunc(size_t value, bool verbose) {
+  return buffer_size_constraint_helper(FLAG_MEMBER_ENUM(G1WrittenCardBufferSize),
+                                       value,
+                                       verbose);
+}
+
 JVMFlag::Error G1UpdateBufferSizeConstraintFunc(size_t value, bool verbose) {
   return buffer_size_constraint_helper(FLAG_MEMBER_ENUM(G1UpdateBufferSize),
                                        value,
