@@ -37,15 +37,6 @@ class IntrusiveListEntry;
 class IntrusiveListImpl;
 
 /**
- * The type of a function for accessing the list entry of an IntrusiveList's
- * element type T.  Such a function takes a reference to const T and returns a
- * reference to const IntrusiveListEntry.
- */
-template<typename T>
-using IntrusiveListEntryAccessor =
-  const IntrusiveListEntry& (*)(std::add_const_t<T>&);
-
-/**
  * The IntrusiveList class template provides a doubly-linked list in
  * which the links between elements are embedded directly into objects
  * contained in the list.  As a result, there are no copies involved
@@ -74,13 +65,13 @@ using IntrusiveListEntryAccessor =
  * * T is the class of the elements in the list.  Must be a class type,
  * possibly const-qualified.
  *
- * * get_entry is a function of type IntrusiveListEntryAccessor<T> used
- * for accessing the IntrusiveListEntry subobject of T used by this list.
+ * * has_size determines whether the list has a size() operation, returning
+ * the number of elements in the list.  If the operation is requested, it has
+ * constant-time complexity.  The default is to not provide a constant-time
+ * size() operation.
  *
- * * has_size determines whether the list has a size()
- * operation, returning the number of elements in the list.  If the
- * operation is present, it has constant-time complexity.  The default
- * is to not provide a constant-time size() operation.
+ * * entry_key designates the IntrusiveListEntry subobject of T associated
+ * with this list.  See IntrusiveListAccess.
  *
  * A const-element iterator has a const-qualified element type.  Such an
  * iterator provides const-qualified access to the elements it designates.
@@ -101,54 +92,69 @@ using IntrusiveListEntryAccessor =
  * "dispose" of the argument object when called, such as by deleting it.  The
  * result of the call is ignored.
  *
- * Usage of IntrusiveList involves defining an element class which
- * contains a IntrusiveListEntry member, and using a corresponding
- * specialization of the IntrusiveList class, e.g.
+ * Usage of IntrusiveList involves defining an element class which contains a
+ * IntrusiveListEntry member, specializing IntrusiveListAccess::get_entry for
+ * that class, and using a corresponding specialization of the IntrusiveList
+ * class.  For the simplest case of a class with only one entry subobject:
  *
  * class MyClass {
  *   ...
  *   IntrusiveListEntry _entry;
+ *   // Friendship is not needed if _entry is public.
+ *   friend class IntrusiveListAccess<MyClass>;
  *   ...
  * public:
  *   ...
- *   static const IntrusiveListEntry& get_entry(const MyClass& v) {
- *     return v._entry;
- *   }
- *   ...
  * };
  *
- *   ...
- *   IntrusiveList<MyClass, &MyClass::get_entry> mylist;
- *   ... use mylist ...
+ * // Get the entry for IntrusiveListEntry::DefaultKey.
+ * template<>
+ * const IntrusiveListEntry&
+ * IntrusiveListAccess<MyClass>::get_entry(const MyClass& v) {
+ *   return v._entry;
+ * }
  *
- * Alternatively, the scope of the entry accessor can be limited, with a
- * type alias of a list specialization providing access, e.g.
+ * Then declare a list of MyClass objects without size tracking:
+ *   IntrusiveList<MyClass> mylist;
+ *
+ * If MyClass has multiple entries, then we need a different key for each.
  *
  * class MyClass {
  *   ...
- *   IntrusiveListEntry _entry;
- *   static const IntrusiveListEntry& get_entry(const MyClass& v) {
- *     return v._entry;
- *   }
+ *   IntrusiveListEntry _entry0;
+ *   IntrusiveListEntry _entry1;
+ *   // Friendship is not needed if _entry is public.
+ *   friend class IntrusiveListAccess<MyClass>;
  *   ...
  * public:
- *   ...
- *   using MyList = IntrusiveList<MyClass, &get_entry>;
+ *   using EntryKey = IntrusiveListEntry::Key;
+ *   static const EntryKey entry0 = static_cast<EntryKey>(0);
+ *   static const EntryKey entry1 = static_cast<EntryKey>(1);
  *   ...
  * };
  *
- *   ...
- *   MyClass::MyList mylist;
- *   ... use mylist ...
+ * and a specialized definition of the two argument get_entry is needed:
+ *
+ * template<>
+ * const IntrusiveListEntry&
+ * IntrusiveListAccess<MyClass>::get_entry(const MyClass& v,
+ *                                         IntrusiveListEntry::Key key) {
+ *   switch (key) {
+ *   case entry0: return v._entry0;
+ *   case entry1: return v._entry1;
+ *   default: ShouldNotReachHere();
+ *   }
+ * }
+ *
+ * and declare a list for each entry:
+ *   IntrusiveList<MyClass, false, MyClass::entry0> list0;  // no size tracking
+ *   IntrusiveList<MyClass, true , MyClass::entry1> list1;  // has size tracking
  */
-template<typename T,
-         IntrusiveListEntryAccessor<T> entry_accessor,
-         bool has_size = false>
-class IntrusiveList;
 
 /**
  * A class with an IntrusiveListEntry member can be used as an element
- * of a corresponding specialization of IntrusiveList.
+ * of a corresponding specialization of IntrusiveList.  A class can have
+ * multiple IntrusiveListEntry members, which are designated by Key values.
  */
 class IntrusiveListEntry {
   friend class IntrusiveListImpl;
@@ -177,6 +183,12 @@ public:
     return result;
   }
 
+  /** Designator for an entry subobject of an object. */
+  enum class Key {};
+
+  /** The default designator.  */
+  static const Key DefaultKey = static_cast<Key>(0);
+
 private:
   // _prev and _next are the links between elements / root entries in
   // an associated list.  The values of these members are type-erased
@@ -193,6 +205,101 @@ private:
   DEBUG_ONLY(mutable IntrusiveListImpl* _list;)
 };
 
+// IntrusiveListAccess provides the list implementation with the mapping from
+// an element class object to an entry subobject, with the subobject
+// designated by a Key value.
+//
+// The key provides a level of indirection between a list declaration and the
+// access code.  A key can be used in a list declaration before the class is
+// complete.  The class only needs to be complete where an access occurs,
+// e.g. where operations on the list are performed.  It's also designed to
+// minimize the effort (amount of source code) required of the element class -
+// just define one fully specialized function.
+//
+// Everything in this class is private, with friend access given to the list
+// implementation.  That prevents this class from making the entry subobjects
+// of a class accessible to others.  Typically the entry subobjects are
+// private in the element class, with friendship access granted to the
+// associated specialization of this class.
+//
+// Having two get_entry functions with different signatures simplifies uses in
+// the very common case where an element class has only one entry subobject.
+// In that case, all that's needed is a specialized definition of the
+// one-argument get_entry function.  If there are multiple entry subobjects
+// then only the two-argument specialized get_entry definition is needed.
+//
+// In the case of multiple subobjects with associated keys, we could pass the
+// key as a template argument rather than an ordinary argument.  That would
+// require a more syntactically complicated function specialization, but might
+// allow better compile-time error checking.
+//
+// Other mechanisms for providing that mapping include:
+//
+// - Provide the list with a pointer-to-data-member for the entry subobject.
+// This is in many cases the simplest, from the POV of what is required by the
+// application.  However, it requires the element class be complete anywhere a
+// list is declared.  It also tends to run afoul of odd corner case compiler
+// bugs.
+//
+// - Provide the list with a function pointer for accessing the entry
+// subobject.  That typically requires at least as much list user setup as
+// required by the current mechanism.  It may also expose (via that function)
+// the entry subobject to other code, though that's less important in a closed
+// "library" like HotSpot.  It may also require the element class to be
+// complete where the list is declared, or instead involve some code
+// contortions to avoid that.
+
+/**
+ * This class provides IntrusiveList with access to IntrusiveListEntry
+ * subobjects in an object of a class.  The class must have an associated
+ * specialized definition for one of the get_entry functions declared here.
+ *
+ * If a class C has one IntrusiveListEntry, designated by DefaultKey, then it
+ * should have an associated definition for
+ *   const IntrusiveListEntry& IntrusiveListAccess<C>::get_entry(const C&)
+ * that returns a reference to the entry in the argument object.
+ *
+ * If a class C has multiple IntrusiveListEntry's, then it should have an
+ * associated definition for
+ *   const IntrusiveListEntry& IntrusiveListAccess<C>::get_entry(const C&, IntrusiveListEntry::Key)
+ * returning a reference to the entry in the argument object designated by the
+ * key.  Note that the key argument is always a constant, so inlining is
+ * likely profitable.
+ *
+ * Only one of the specializatiions should be defined.  In either case, the
+ * definition must return a reference to the entry subobject of the argument
+ * object for the key.
+ */
+template<typename T>
+class IntrusiveListAccess {
+  friend class IntrusiveListImpl;
+
+  // Don't put any other declarations here, such as convenient type aliases.
+  // Any such are visible in the specialized get_entry definitions provided by
+  // element classes, possibly unexpectedly shadowing identifiers referenced
+  // by those definitions.
+
+  // This function gets called when the key is DefaultKey and there isn't a
+  // specialized definition.  It just forwards to the corresponding two
+  // argument function.  This allows a class having multiple entries to only
+  // specialize the two-argument function.
+  static const IntrusiveListEntry&
+  get_entry(std::add_const_t<T>& v) {
+    return get_entry(v, IntrusiveListEntry::DefaultKey);
+  }
+
+  // If there is a two-argument call, there must be a specialized definition.
+  // Two-argument calls are made for non-default keys and by the unspecialized
+  // one-argument overload above.
+  static const IntrusiveListEntry&
+  get_entry(std::add_const_t<T>& v, IntrusiveListEntry::Key entry_key) = delete;
+};
+
+template<typename T,
+         bool has_size = false,
+         IntrusiveListEntry::Key key = IntrusiveListEntry::DefaultKey>
+class IntrusiveList;
+
 // IntrusiveListImpl provides implementation support for IntrusiveList.
 // There's nothing for clients to see here. That support is all private, with
 // the IntrusiveList class given access via friendship.
@@ -203,7 +310,7 @@ public:
 private:
   using Entry = IntrusiveListEntry;
 
-  template<typename T, IntrusiveListEntryAccessor<T>, bool>
+  template<typename T, bool, Entry::Key>
   friend class IntrusiveList;
 
   using size_type = size_t;
@@ -276,7 +383,7 @@ private:
   // Iterator support.  IntrusiveList defines its iterator types as
   // specializations of this class.
   template<typename T,
-           IntrusiveListEntryAccessor<T> entry_accessor,
+           IntrusiveListEntry::Key entry_key,
            bool is_forward>
   class IteratorImpl;
 
@@ -286,7 +393,20 @@ private:
   // API for iterators.
   template<typename Iterator> class IteratorOperations;
 
-  template<typename Iterator> struct EntryAccess;
+  // Select which get_entry overload to call, based on the key value, using
+  // SFINAE to prevent introducing a call site for the other.
+  // C++17 if-constexpr simplification candidate.
+  template<Entry::Key entry_key, typename T,
+           ENABLE_IF(entry_key == Entry::DefaultKey)>
+  static const Entry& get_entry(const T& v) {
+    return IntrusiveListAccess<T>::get_entry(v);
+  }
+
+  template<Entry::Key entry_key, typename T,
+           ENABLE_IF(entry_key != Entry::DefaultKey)>
+  static const Entry& get_entry(const T& v) {
+    return IntrusiveListAccess<T>::get_entry(v, entry_key);
+  }
 
   // Predicate metafunction for determining whether T is a non-const
   // IntrusiveList type.
@@ -330,22 +450,8 @@ private:
   size_type _size;
 };
 
-// Destructure iterator type to be provide calling the entry accessor.
-template<typename T,
-         IntrusiveListEntryAccessor<T> accessor,
-         bool is_forward>
-struct IntrusiveListImpl::EntryAccess<
-  IntrusiveListImpl::IteratorImpl<T, accessor, is_forward>>
-{
-  static const Entry& get_entry(typename ListTraits<T>::const_reference v) {
-    return accessor(v);
-  }
-};
-
-template<typename T,
-         IntrusiveListEntryAccessor<T> accessor,
-         bool has_size>
-struct IntrusiveListImpl::IsListType<IntrusiveList<T, accessor, has_size>>
+template<typename T, bool has_size, IntrusiveListEntry::Key key>
+struct IntrusiveListImpl::IsListType<IntrusiveList<T, has_size, key>>
   : public std::true_type
 {};
 
@@ -479,7 +585,7 @@ public:
   // Corresponding is_element is not used, so not provided.
 
   static const Entry& get_entry(const_reference v) {
-    return EntryAccess<Iterator>::get_entry(v);
+    return Impl::get_entry<Iterator::_entry_key>(v);
   }
 
   static const_reference dereference(Iterator i) {
@@ -580,13 +686,14 @@ public:
  * but not vice versa.
  */
 template<typename T,
-         IntrusiveListEntryAccessor<T> get_entry,
+         IntrusiveListEntry::Key entry_key,
          bool is_forward>
 class IntrusiveListImpl::IteratorImpl {
   friend class IntrusiveListImpl;
 
   static const bool _is_forward = is_forward;
   static const bool _is_const_element = std::is_const<T>::value;
+  static const IntrusiveListEntry::Key _entry_key = entry_key;
 
   using Impl = IntrusiveListImpl;
   using ListTraits = Impl::ListTraits<T>;
@@ -598,7 +705,7 @@ class IntrusiveListImpl::IteratorImpl {
   // non-const-element iterator type.
   template<typename From>
   static constexpr bool is_convertible_iterator() {
-    using NonConst = IteratorImpl<std::remove_const_t<T>, get_entry, _is_forward>;
+    using NonConst = IteratorImpl<std::remove_const_t<T>, entry_key, _is_forward>;
     return _is_const_element && std::is_same<From, NonConst>::value;
   }
 
@@ -780,12 +887,10 @@ private:
   {}
 };
 
-template<typename T,
-         IntrusiveListEntryAccessor<T> get_entry,
-         bool has_size>
+template<typename T, bool has_size, IntrusiveListEntry::Key entry_key>
 class IntrusiveList : public IntrusiveListImpl::SizeBase<has_size> {
   // Give access to other instantiations, for splice().
-  template<typename U, IntrusiveListEntryAccessor<U>, bool>
+  template<typename U, bool, IntrusiveListEntry::Key>
   friend class IntrusiveList;
 
   // Give access for unit testing.
@@ -814,6 +919,7 @@ class IntrusiveList : public IntrusiveListImpl::SizeBase<has_size> {
 
   // Helper for can_splice_from, delaying instantiation that includes
   // "Other::iterator" until Other is known to be a List type.
+  // C++17 if-constexpr cleanup candidate.
   template<typename Other, typename Iterator>
   struct HasConvertibleIterator
     : public BoolConstant<std::is_convertible<typename Other::iterator, Iterator>::value>
@@ -829,6 +935,7 @@ class IntrusiveList : public IntrusiveListImpl::SizeBase<has_size> {
 
   // Helper for can_swap, delaying instantiation that includes
   // "Other::iterator" until Other is known to be a List type.
+  // C++17 if-constexpr cleanup candidate.
   template<typename Other, typename Iterator>
   struct HasSameIterator
     : public BoolConstant<std::is_same<typename Other::iterator, Iterator>::value>
@@ -861,19 +968,19 @@ public:
 
   /** Forward iterator type. */
   using iterator =
-    Impl::IteratorImpl<T, get_entry, true>;
+    Impl::IteratorImpl<T, entry_key, true>;
 
   /** Forward iterator type with const elements. */
   using const_iterator =
-    Impl::IteratorImpl<std::add_const_t<T>, get_entry, true>;
+    Impl::IteratorImpl<std::add_const_t<T>, entry_key, true>;
 
   /** Reverse iterator type. */
   using reverse_iterator =
-    Impl::IteratorImpl<T, get_entry, false>;
+    Impl::IteratorImpl<T, entry_key, false>;
 
   /** Reverse iterator type with const elements. */
   using const_reverse_iterator =
-    Impl::IteratorImpl<std::add_const_t<T>, get_entry, false>;
+    Impl::IteratorImpl<std::add_const_t<T>, entry_key, false>;
 
   /** Make an empty list. */
   IntrusiveList() : _impl() {}
@@ -1249,7 +1356,7 @@ public:
   //
   // It provides better compile-time error messages for certain kinds of usage
   // mistakes.  For example, if a splice from_list is not actually a list, or
-  // a list with a different get_entry function, we get some kind of "no
+  // a list with a different entry_key, we get some kind of "no
   // applicable function" failure at the call site, rather than some obscure
   // access failure deep inside the implementation of the operation.
   //
@@ -1550,6 +1657,10 @@ private:
     assert_is_element(value);
     Impl::detach(get_entry(value));
     adjust_size(-1);
+  }
+
+  static const Entry& get_entry(const_reference v) {
+    return Impl::get_entry<entry_key>(v);
   }
 };
 

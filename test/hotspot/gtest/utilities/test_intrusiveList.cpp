@@ -35,10 +35,14 @@
 
 using Entry = IntrusiveListEntry;
 
-struct TestIntrusiveListValue : public CHeapObj<mtInternal> {
-  size_t _value;
+const Entry::Key list2_key = static_cast<Entry::Key>(2);
 
-  // Note: Entry members need to be public, to work around VS2013 bug.
+class TestIntrusiveListValue : public CHeapObj<mtInternal> {
+public:
+  using Value = TestIntrusiveListValue; // convenience
+
+private:
+  size_t _value;
 
   Entry _entry1;                // Entry for first list.
 
@@ -46,17 +50,16 @@ struct TestIntrusiveListValue : public CHeapObj<mtInternal> {
   // list.  We only use _entry1 for most other tests.
   Entry _entry2;                // Entry for second list.
 
+  friend class IntrusiveListAccess<Value>;
+
+public:
   TestIntrusiveListValue(size_t value) : _value(value) { }
 
   NONCOPYABLE(TestIntrusiveListValue);
 
-  using Value = TestIntrusiveListValue; // convenience
-
   size_t value() const { return _value; }
-  static const Entry& entry1(const Value& v) { return v._entry1; }
-  static const Entry& entry2(const Value& v) { return v._entry2; }
-  bool is_attached1() const { return entry1(*this).is_attached(); }
-  bool is_attached2() const { return entry2(*this).is_attached(); }
+  bool is_attached1() const { return _entry1.is_attached(); }
+  bool is_attached2() const { return _entry2.is_attached(); }
   Value* This() { return this; }
   const Value* This() const { return this; }
 };
@@ -64,11 +67,28 @@ struct TestIntrusiveListValue : public CHeapObj<mtInternal> {
 // Convenience type aliases.
 using Value = TestIntrusiveListValue;
 
-using List1 = IntrusiveList<Value, &Value::entry1>;
-using List2 = IntrusiveList<Value, &Value::entry2>;
+template<>
+inline const Entry&
+IntrusiveListAccess<Value>::get_entry(const Value& v, Entry::Key entry_key) {
+  switch (entry_key) {
+  case IntrusiveListEntry::DefaultKey:
+    break;
+  case list2_key:
+    return v._entry2;
+  default:
+    ShouldNotReachHere();
+    // Currently have incomplete noreturn support, so compiler may think we
+    // CAN reach here.
+  }
+  // Contorted structure because of incomplete noreturn support.
+  return v._entry1;
+}
 
-using CList1 = IntrusiveList<const Value, &Value::entry1>;
-using CList2 = IntrusiveList<const Value, &Value::entry2>;
+using List1 = IntrusiveList<Value>;
+using List2 = IntrusiveList<Value, false, list2_key>;
+
+using CList1 = IntrusiveList<const Value>;
+using CList2 = IntrusiveList<const Value, false, list2_key>;
 
 ////////////////////
 // Some preliminary tests.
@@ -1526,7 +1546,7 @@ class IntrusiveListTestWithSize : public IntrusiveListTestWithValues {
   typedef IntrusiveListTestWithValues super;
 
 public:
-  typedef IntrusiveList<Value, &Value::entry1, true> ListWithSize;
+  typedef IntrusiveList<Value, true> ListWithSize;
 
   void SetUp() override {
     super::SetUp();
@@ -1650,4 +1670,63 @@ TEST_F(IntrusiveListTestWithSize, splice) {
   EXPECT_EQ(nvalues, list1.length());
 
   list1.clear();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Test DefaultKey-only list entry
+
+class TestIntrusiveListValue1 : public CHeapObj<mtInternal> {
+public:
+  using Value1 = TestIntrusiveListValue1;
+
+private:
+  size_t _value;
+  Entry _entry;
+
+  friend class IntrusiveListAccess<Value1>;
+
+public:
+  TestIntrusiveListValue1(size_t value) : _value(value) {}
+
+  NONCOPYABLE(TestIntrusiveListValue1);
+
+  size_t value() const { return _value; }
+};
+
+using Value1 = TestIntrusiveListValue1;
+
+template<>
+inline const Entry& IntrusiveListAccess<Value1>::get_entry(const Value1& v) {
+  return v._entry;
+}
+
+TEST(IntrusiveListTestValue1, basic) {
+  const size_t nvalues = 10;
+  Value1* values[nvalues];
+
+  for (size_t i = 0; i < nvalues; ++i) {
+    values[i] = new Value1(i);
+  }
+
+  using ListV1 = IntrusiveList<Value1, true>; // Use DefaultKey
+  ListV1 list{};
+
+  for (size_t i = 0; i < nvalues; ++i) {
+    EXPECT_EQ(i, list.size());
+    list.push_back(*values[i]);
+  }
+  EXPECT_EQ(nvalues, list.size());
+
+  {
+    size_t i = 0;
+    for (ListV1::const_reference v : list) {
+      EXPECT_EQ(i++, v.value());
+    }
+  }
+
+  list.clear();
+
+  for (size_t i = 0; i < nvalues; ++i) {
+    delete values[i];
+  }
 }
