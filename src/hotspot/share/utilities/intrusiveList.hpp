@@ -828,21 +828,39 @@ public:
 
   /**
    * Return true if this and other refer to the same element of a list,
-   * or both refer to end-of-list.
+   * or both refer to end-of-list for the same list.
    *
-   * precondition: this and other are both dereferenceable or end-of-list.
+   * precondition: this and other are both valid iterators for the same list,
+   * or both are singular.
    * complexity: constant.
    */
   bool operator==(const IteratorImpl& other) const {
-    IOps::assert_is_in_some_list(*this);
-    IOps::assert_is_in_some_list(other);
+    // C++14 24.2.5/2: The domain of == for iterators is that of iterators
+    // over the same underlying sequence.  However, C++14 additionally permits
+    // comparison of value-initialized iterators, which compare equal to other
+    // value-initialized iterators of the same type.  We can't distinguish
+    // between a value-initialized iterator and a singular iterator.  So
+    // singular iterators with the same (ignoring const qualification) element
+    // type are considered equal.
+#ifdef ASSERT
+    if (IOps::is_singular(*this)) {
+      assert(IOps::is_singular(other), "Comparing singular and non-singular");
+    } else {
+      assert(!IOps::is_singular(other), "Comparing singular and non-singular");
+      IOps::assert_is_in_some_list(*this);
+      IOps::assert_is_in_some_list(other);
+      assert(IOps::list_ptr(*this) == IOps::list_ptr(other),
+             "Comparing iterators from different lists");
+    }
+#endif // ASSERT
     return IOps::encoded_value(*this) == IOps::encoded_value(other);
   }
 
   /**
    * Return true if this and other are not ==.
    *
-   * precondition: this and other are both dereferenceable or end-of-list.
+   * precondition: this and other are both valid iterators for the same list,
+   * or both are singular.
    * complexity: constant.
    */
   bool operator!=(const IteratorImpl& other) const {

@@ -687,6 +687,28 @@ TEST_F(IntrusiveListTestWithList1, compare) {
   test_iterator_compare(list1.rbegin(), list1.crbegin());
 }
 
+TEST(IntrusiveListTest, compare_singular) {
+  using iterator = typename List1::iterator;
+  using const_iterator = typename List1::const_iterator;
+  iterator i1{};
+  iterator i2{};
+  iterator i3;
+  const_iterator ci1{};
+  const_iterator ci2{};
+  const_iterator ci3;
+
+  EXPECT_EQ(i1, i2);
+  EXPECT_EQ(i1, i3);
+  EXPECT_EQ(i1, ci1);
+  EXPECT_EQ(ci1, ci2);
+  EXPECT_EQ(ci1, ci3);
+
+  // Singular iterator from list type with size tracking.
+  // The iterator type doesn't include information about size tracking.
+  typename IntrusiveList<Value, true>::iterator ii1{};
+  EXPECT_EQ(i1, ii1);
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // pop_front
 // pop_back
