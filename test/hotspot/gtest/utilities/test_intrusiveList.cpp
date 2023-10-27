@@ -1300,6 +1300,37 @@ TEST_F(IntrusiveListTestSplice, splice_some_middle) {
   }
 }
 
+TEST_F(IntrusiveListTestSplice, splice_into_const) {
+  CList1 clist{};
+  size_t a_size = list_a.length();
+  size_t b_size = list_b.length();
+  CList1::iterator sresult_a = clist.splice(clist.end(), list_a);
+  CList1::iterator sresult_b = clist.splice(clist.end(), list_b);
+  EXPECT_EQ(clist.length(), a_size + b_size);
+  EXPECT_EQ(sresult_a, clist.begin());
+  {
+    SCOPED_TRACE("check values");
+    check(clist.begin(), clist.end(), 0);
+  }
+
+  // Some invalid uses to allow one to examine the compiler errors.
+
+  // This doesn't compile, which is as expected.  Transfer from list with
+  // const elements to a list with non-const elements is disallowed, because
+  // it implicitly casts away const.
+  // List1::iterator sresult_c = list_a.splice(list_a.end(), clist);
+
+  // This doesn't compile either, as expected.  Splicing from a non-list.
+  // class Foo {};
+  // Foo foo{};
+  // clist.splice(clist.end(), foo);
+
+  clist.clear();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// splice one
+
 TEST_F(IntrusiveListTestSplice, splice_one_front) {
   const size_t move_start = 1;
   size_t a_size = list_a.length();
@@ -1395,33 +1426,8 @@ TEST_F(IntrusiveListTestSplice, splice_one_in_place) {
   }
 }
 
-TEST_F(IntrusiveListTestSplice, splice_into_const) {
-  CList1 clist{};
-  size_t a_size = list_a.length();
-  size_t b_size = list_b.length();
-  CList1::iterator sresult_a = clist.splice(clist.end(), list_a);
-  CList1::iterator sresult_b = clist.splice(clist.end(), list_b);
-  EXPECT_EQ(clist.length(), a_size + b_size);
-  EXPECT_EQ(sresult_a, clist.begin());
-  {
-    SCOPED_TRACE("check values");
-    check(clist.begin(), clist.end(), 0);
-  }
-
-  // Some invalid uses to allow one to examine the compiler errors.
-
-  // This doesn't compile, which is as expected.  Transfer from list with
-  // const elements to a list with non-const elements is disallowed, because
-  // it implicitly casts away const.
-  // List1::iterator sresult_c = list_a.splice(list_a.end(), clist);
-
-  // This doesn't compile either, as expected.  Splicing from a non-list.
-  // class Foo {};
-  // Foo foo{};
-  // clist.splice(clist.end(), foo);
-
-  clist.clear();
-}
+//////////////////////////////////////////////////////////////////////////////
+// swap
 
 TEST_F(IntrusiveListTestSplice, swap) {
   List1::reference front_a = list_a.front();

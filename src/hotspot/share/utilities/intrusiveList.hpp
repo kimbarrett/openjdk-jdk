@@ -1397,6 +1397,60 @@ public:
    *
    * precondition: pos must be a valid iterator for this list.
    * precondition: from and to must form a valid range for from_list.
+   * precondition: n is the distance between from and to.
+   * precondition: pos is not in the range to transfer, i.e. either
+   * - this != &from_list, or
+   * - pos is reachable from to, or
+   * - pos is not reachable from from.
+   *
+   * postcondition: iterators referring to elements in the transferred range
+   * are valid iterators for this list rather than from_list.
+   *
+   * complexity: constant.
+   */
+  template<typename FromList, ENABLE_IF(can_splice_from<FromList>())>
+  iterator splice(const_iterator pos,
+                  FromList& from_list,
+                  typename FromList::iterator from,
+                  typename FromList::const_iterator to,
+                  size_type n) {
+    assert_is_iterator(pos);
+    from_list.assert_is_iterator(from);
+    from_list.assert_is_iterator(to);
+
+    // Done if empty range.  This check simplifies remainder.
+    if (from == to) {
+      assert(n == 0, "incorrect range size: %zu, actual 0", n);
+      return make_iterator<iterator>(pos);
+    }
+
+#ifdef ASSERT
+    if (is_same_list(from_list)) {
+      size_type count = check_self_splice_range(pos, from_list, from, to);
+      assert(count == n, "incorrect range size: %zu, actual %zu", n, count);
+    }
+#endif // ASSERT
+
+    // Done if already in desired position.  This check simplifies the normal case.
+    if (is_same_list(from_list) && (pos == to)) {
+      return make_iterator_to<iterator>(*from);
+    }
+
+    // Adjust sizes.  Could skip if same list, but not worth checking.
+    from_list.decrease_size(n);
+    this->increase_size(n);
+
+    return splice_transfer(pos, from_list, from, to);
+  }
+
+  /**
+   * Transfers the elements of from_list in the range designated by
+   * from and to to this list, inserted before pos.  Returns an
+   * iterator referring to the head of the spliced in range.  Does
+   * not invalidate any iterators.
+   *
+   * precondition: pos must be a valid iterator for this list.
+   * precondition: from and to must form a valid range for from_list.
    * precondition: pos is not in the range to transfer, i.e. either
    * - this != &from_list, or
    * - pos is reachable from to, or
@@ -1416,20 +1470,24 @@ public:
                   FromList& from_list,
                   typename FromList::iterator from,
                   typename FromList::const_iterator to) {
-    using Iterator = const_iterator;
-    using Result = iterator;
-    using IOps = Impl::IteratorOperations<Iterator>;
-
     assert_is_iterator(pos);
     from_list.assert_is_iterator(from);
     from_list.assert_is_iterator(to);
 
+    // Done if empty range.  This check simplifies remainder.
     if (from == to) {
-      // Done if empty range.
-      return make_iterator<Result>(pos);
-    } else if (is_same_list(from_list) && (pos == to)) {
-      // Done if already in desired position.
-      return make_iterator_to<Result>(*from);
+      return make_iterator<iterator>(pos);
+    }
+
+#ifdef ASSERT
+    if (is_same_list(from_list)) {
+      check_self_splice_range(pos, from_list, from, to);
+    }
+#endif // ASSERT
+
+    // Done if already in desired position.  This check simplifies the normal case.
+    if (is_same_list(from_list) && (pos == to)) {
+      return make_iterator_to<iterator>(*from);
     }
 
     // Adjust sizes if needed.
@@ -1437,30 +1495,25 @@ public:
       splice_adjust_size(from_list, from, to);
     }
 
-#ifdef ASSERT
-    // Transfer elements to this list, and verify pos not in [from, to).
-    if (is_same_list(from_list)) {
-      for (Iterator i = from; i != to; ++i) {
-        assert(i != pos, "splice range includes destination");
-      }
-    } else {
-      for (Iterator i = from; i != to; ++i) {
-        set_list(*i, &_impl);
-      }
-    }
-#endif // ASSERT
-
-    // to is end of non-empty range, so has a dereferenceable predecessor.
-    Iterator to_pred = --Iterator(to); // Fetch before clobbered
-    // from is dereferenceable since it neither follows nor equals to.
-    const_reference from_value = *from;
-    IOps::iter_attach(IOps::predecessor(from_value), to);
-    IOps::attach(IOps::iter_predecessor(pos), from_value);
-    IOps::attach(*to_pred, pos);
-    return make_iterator_to<Result>(from_value);
+    return splice_transfer(pos, from_list, from, to);
   }
 
 private:
+
+#ifdef ASSERT
+  template<typename FromList>
+  size_type check_self_splice_range(const_iterator pos,
+                                    FromList& from_list,
+                                    const_iterator from,
+                                    const_iterator to) {
+    size_type count = 0;
+    for (auto i = from; i != to; ++i) {
+      assert(i != pos, "splice range includes destination");
+      ++count;
+    }
+    return count;
+  }
+#endif // ASSERT
 
   // Select size-adjuster via SFINAE to only call size when available.
   // C++17 if-constexpr simplification candidate.
@@ -1490,6 +1543,30 @@ private:
     this->increase_size(transferring);
   }
 
+  template<typename FromList>
+  iterator splice_transfer(const_iterator pos,
+                           FromList& from_list,
+                           typename FromList::iterator from,
+                           typename FromList::const_iterator to) {
+    assert(from != to, "precondition");
+    using IOps = Impl::IteratorOperations<const_iterator>;
+    // to is end of non-empty range, so has a dereferenceable predecessor.
+    const_iterator to_pred = --const_iterator(to); // Fetch before clobbered
+    // from is dereferenceable since it heads a non-empty range.
+    const_reference from_value = *from;
+#ifdef ASSERT
+    if (!is_same_list(from_list)) {
+      for (auto i = from; i != to; ++i) {
+        set_list(*i, &_impl);
+      }
+    }
+#endif // ASSERT
+    IOps::iter_attach(IOps::predecessor(from_value), to);
+    IOps::attach(IOps::iter_predecessor(pos), from_value);
+    IOps::attach(*to_pred, pos);
+    return make_iterator_to<iterator>(from_value);
+   }
+
 public:
 
   /**
@@ -1512,8 +1589,26 @@ public:
   template<typename FromList, ENABLE_IF(can_splice_from<FromList>())>
   iterator splice(const_iterator pos, FromList& from_list) {
     assert(!is_same_list(from_list), "precondition");
-    return splice(pos, from_list, from_list.begin(), from_list.end());
+    return splice_all(pos, from_list);
   }
+
+private:
+
+  // Select which splice with range overload to call, using SFINAE to only use
+  // the one with a size argument when from_list has constant-time size.
+  // C++17 if-constexpr simplification candidate.
+
+  template<typename FromList, ENABLE_IF(FromList::_has_size)>
+  iterator splice_all(const_iterator pos, FromList& from_list) {
+    return splice(pos, from_list, from_list.begin(), from_list.end(), from_list.size());
+  }
+
+  template<typename FromList, ENABLE_IF(!FromList::_has_size)>
+  iterator splice_all(const_iterator pos, FromList& from_list) {
+     return splice(pos, from_list, from_list.begin(), from_list.end());
+   }
+
+public:
 
   /**
    * Transfers the element of from_list referred to by from to this
