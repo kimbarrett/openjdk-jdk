@@ -1673,32 +1673,49 @@ public:
   template<typename OtherList, ENABLE_IF(can_swap<OtherList>())>
   void swap(OtherList& other) {
     assert(!is_same_list(other), "self-swap");
-    if (!_has_size) {
-      // This list does not have constant-time size. First, transfer other's
-      // elements to the front of this list (a constant-time operation).  Then
-      // transfer this list's original elements to other (linear time if other
-      // has constant-time size, constant-time if it doesn't).
-      iterator old_begin = begin();
-      splice(old_begin, other);
-      other.splice(other.begin(), *this, old_begin, end());
-    } else if (!OtherList::_has_size) {
-      // This list has constant-time size but other doesn't.  First,
-      // transfer all of this list's elements to other (a constant-time
-      // operation).  Then transfer other's original elements to this list
-      // (linear time).
-      typename OtherList::iterator other_begin = other.begin();
-      other.splice(other_begin, *this);
-      splice(begin(), other, other_begin, other.end());
-    } else {
-      // Both lists have constant-time sizes that need to be managed.  Use an
-      // intermediate temporary so all transfers are of entire lists.  This
-      // stays within the constant-time domain for all of the transfers.
-      IntrusiveList temp{};
-      temp.splice(temp.begin(), other);
-      other.splice(other.begin(), *this);
-      splice(begin(), temp);
-    }
+    swap_impl(*this, other);
   }
+
+private:
+
+  // Select swap implementation using SFINAE, based on whether the lists are
+  // size-tracking.
+  // C++17 if-constexpr simplification candidate.
+
+  // If list2 has constant-time size, we can use that when transferring its
+  // contents to list1.  First transfer all of list1 to the front of list2,
+  // which is constant-time if list1 has size, else linear.  Then transfer the
+  // original contents of list2 to list1 using the original size, which is
+  // constant-time.
+  template<typename List1, typename List2, ENABLE_IF(List2::_has_size)>
+  static void swap_impl(List1& list1, List2& list2) {
+    size_type old_size = list2.size();
+    auto old_start = list2.begin();
+    list2.splice(old_start, list1);
+    list1.splice(list1.end(), list2, old_start, list2.end(), old_size);
+  }
+
+  // If neither list has constant-time size, then transfer all of list1 to the
+  // front of list2, then transfer the original contents of list2 to list1.
+  // (Or vice versa.)  Both are constant-time operations.
+  template<typename List1, typename List2,
+           ENABLE_IF(!List1::_has_size), ENABLE_IF(!List2::_has_size)>
+  static void swap_impl(List1& list1, List2& list2) {
+    auto old_start = list2.begin();
+    list2.splice(old_start, list1);
+    list1.splice(list1.end(), list2, old_start, list2.end());
+  }
+
+  // If list1 has constant-time size and list2 doesn't, then reverse the order
+  // of the arguments to call the overload where list2 does, getting a linear
+  // time operation.
+  template<typename List1, typename List2,
+           ENABLE_IF(List1::_has_size), ENABLE_IF(!List2::_has_size)>
+  static void swap_impl(List1& list1, List2& list2) {
+    swap_impl(list2, list1);
+  }
+
+public:
 
   /**
    * Returns a [const_][reverse_]iterator referring to value.
