@@ -31,6 +31,7 @@
 #include "utilities/align.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/macros.hpp"
+#include <limits>
 #include <type_traits>
 
 class IntrusiveListEntry;
@@ -372,10 +373,10 @@ private:
     using const_reference = std::add_lvalue_reference_t<std::add_const_t<value_type>>;
   };
 
-  // Stand-in for std::distance.
-  template<typename Iterator1, typename Iterator2>
-  static difference_type distance(Iterator1 from, Iterator2 to) {
-    difference_type result = 0;
+  // Like std::distance, but returns size_type because that's what's needed here.
+  template<typename Iterator>
+  static size_type distance(Iterator from, Iterator to) {
+    size_type result = 0;
     for ( ; from != to; ++result, ++from) {}
     return result;
   }
@@ -430,8 +431,8 @@ protected:
   SizeBase() = default;
   ~SizeBase() = default;
 
-  size_type* size_ptr() { return nullptr; }
-  void adjust_size(difference_type n) {}
+  void increase_size(size_type n) {}
+  void decrease_size(size_type n) {}
 };
 
 template<>
@@ -443,8 +444,15 @@ protected:
   SizeBase() : _size(0) {}
   ~SizeBase() = default;
 
-  size_type* size_ptr() { return &_size; }
-  void adjust_size(difference_type n) { _size += n; }
+  void increase_size(size_type n) {
+    assert((std::numeric_limits<size_type>::max() - n) >= _size, "size overflow");
+    _size += n;
+  }
+
+  void decrease_size(size_type n) {
+    assert(n <= _size, "size underflow");
+    _size -= n;
+  }
 
 private:
   size_type _size;
@@ -917,7 +925,6 @@ class IntrusiveList : public IntrusiveListImpl::SizeBase<has_size> {
   using Entry = IntrusiveListEntry;
   using Impl = IntrusiveListImpl;
   using ListTraits = Impl::ListTraits<T>;
-  using Super = Impl::SizeBase<has_size>;
 
   // A subsequence of one list can be transferred to another list via splice
   // if the lists have the same (ignoring const qualifiers) element type, use
@@ -1174,7 +1181,7 @@ public:
    * complexity: O(length())
    */
   size_type length() const {
-    return static_cast<size_type>(Impl::distance(cbegin(), cend()));
+    return Impl::distance(cbegin(), cend());
   }
 
   /**
@@ -1364,7 +1371,7 @@ private:
     IOps::attach(IOps::iter_predecessor(pos), value);
     IOps::attach(value, pos);
     DEBUG_ONLY(set_list(value, &_impl);)
-    adjust_size(1);
+    this->increase_size(1);
     return make_iterator_to<Result>(value);
   }
 
@@ -1425,23 +1432,9 @@ public:
       return make_iterator_to<Result>(*from);
     }
 
-    // Adjust sizes if needed.  Only need adjustment if different
-    // lists and at least one of the lists has a constant-time size.
+    // Adjust sizes if needed.
     if ((_has_size || from_list._has_size) && !is_same_list(from_list)) {
-      difference_type transferring;
-      if (from_list._has_size &&
-          (from == from_list.cbegin()) &&
-          (to == from_list.cend())) {
-        // If from_list has constant-time size() and we're transferring
-        // all of it, we can use that size value to avoid counting the
-        // number of elements being transferred.
-        transferring = *from_list.size_ptr();
-      } else {
-        // Count the number of elements being transferred.
-        transferring = Impl::distance(from, to);
-      }
-      from_list.adjust_size(-transferring);
-      adjust_size(transferring);
+      splice_adjust_size(from_list, from, to);
     }
 
 #ifdef ASSERT
@@ -1466,6 +1459,38 @@ public:
     IOps::attach(*to_pred, pos);
     return make_iterator_to<Result>(from_value);
   }
+
+private:
+
+  // Select size-adjuster via SFINAE to only call size when available.
+  // C++17 if-constexpr simplification candidate.
+
+  template<typename FromList, ENABLE_IF(FromList::_has_size)>
+  void splice_adjust_size(FromList& from_list,
+                          typename FromList::const_iterator from,
+                          typename FromList::const_iterator to) {
+    size_type transferring;
+    // If transferring entire list we can use constant-time size rather than
+    // linear-time distance.
+    if ((from == from_list.cbegin()) && (to == from_list.cend())) {
+      transferring = from_list.size();
+    } else {
+      transferring = Impl::distance(from, to);
+    }
+    from_list.decrease_size(transferring);
+    this->increase_size(transferring);
+  }
+
+  template<typename FromList, ENABLE_IF(!FromList::_has_size)>
+  void splice_adjust_size(FromList& from_list,
+                          typename FromList::const_iterator from,
+                          typename FromList::const_iterator to) {
+    size_type transferring = Impl::distance(from, to);
+    from_list.decrease_size(transferring);
+    this->increase_size(transferring);
+  }
+
+public:
 
   /**
    * Transfers all elements of from_list to this list, inserted before
@@ -1527,12 +1552,12 @@ public:
 
     // Remove from_value from from_list.
     IOps::iter_attach(IOps::predecessor(from_value), IOps::successor(from_value));
-    from_list.adjust_size(-1);
+    from_list.decrease_size(1);
 
     // Add from_value to this list before pos.
     IOps::attach(IOps::iter_predecessor(pos), from_value);
     IOps::attach(from_value, pos);
-    adjust_size(1);
+    this->increase_size(1);
 
     return make_iterator_to<iterator>(from_value);
   }
@@ -1613,14 +1638,6 @@ public:
 private:
   Impl _impl;
 
-  size_type* size_ptr() {
-    return Super::size_ptr();
-  }
-
-  void adjust_size(difference_type value) {
-    Super::adjust_size(value);
-  }
-
   template<typename OtherList>
   bool is_same_list(const OtherList& other) const {
     return &_impl == &other._impl;
@@ -1674,7 +1691,7 @@ private:
   void detach(const_reference value) {
     assert_is_element(value);
     Impl::detach(get_entry(value));
-    adjust_size(-1);
+    this->decrease_size(1);
   }
 
   static const Entry& get_entry(const_reference v) {
