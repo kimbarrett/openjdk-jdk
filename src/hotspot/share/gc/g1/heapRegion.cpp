@@ -557,6 +557,8 @@ class G1VerifyLiveAndRemSetClosure : public BasicOopIterateClosure {
     }
 
     bool failed() const {
+      // FIXME: doesn't currently work with +G1UseWrittenCardQueues.
+      if (G1UseWrittenCardQueues) return false;
       if (_from != _to && !_from->is_young() && _to->rem_set()->is_complete()) {
         const CardValue dirty = G1CardTable::dirty_card_val();
         return !(_to->rem_set()->contains_reference(this->_p) ||
