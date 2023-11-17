@@ -88,10 +88,10 @@ class IntrusiveListImpl;
  * object's const qualifier.
  *
  * Some operations that remove elements from a list take a disposer argument.
- * This is a function or function object that will be called with one
- * argument, of type pointer to T, to a removed element.  This function should
- * "dispose" of the argument object when called, such as by deleting it.  The
- * result of the call is ignored.
+ * This is a function object that will be called with one argument, of type
+ * pointer to T, to a removed element.  This function should "dispose" of the
+ * argument object when called, such as by deleting it.  The result of the
+ * call is ignored.
  *
  * Usage of IntrusiveList involves defining an element class which contains a
  * IntrusiveListEntry member, specializing IntrusiveListAccess::get_entry for
@@ -141,8 +141,8 @@ class IntrusiveListImpl;
  * IntrusiveListAccess<MyClass>::get_entry(const MyClass& v,
  *                                         IntrusiveListEntry::Key key) {
  *   switch (key) {
- *   case entry0: return v._entry0;
- *   case entry1: return v._entry1;
+ *   case MyClass::entry0: return v._entry0;
+ *   case MyClass::entry1: return v._entry1;
  *   default: ShouldNotReachHere();
  *   }
  * }
@@ -633,7 +633,6 @@ public:
   // provided because that form is never needed.)
 
   // Mixed reference / iterator attachment.
-  // C++11: use rvalue references and perfect forwarding.
   template<typename PredType, typename SuccType>
   static void attach(const PredType& pred, const SuccType& succ) {
     _is_forward ? attach_impl(pred, succ) : attach_impl(succ, pred);
