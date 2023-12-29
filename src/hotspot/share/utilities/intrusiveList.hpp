@@ -642,9 +642,13 @@ public:
     _is_forward ? iter_attach_impl(pred, succ) : iter_attach_impl(succ, pred);
   }
 
-  template<typename Iterator2>
-  static Iterator make_iterator(Iterator2 i) {
-    return Iterator(IOps<Iterator2>::encoded_value(i));
+  // Provides conversion between different element type qualifications,
+  // including from const-element to non-const-element.  This is the escape
+  // hatch from internally using const-element everywhere, supporting
+  // conversion to the desired qualification on the way out of the public API.
+  template<typename From>
+  static Iterator convert_iterator(From i) {
+    return Iterator(IOps<From>::encoded_value(i));
   }
 
   static Iterator make_iterator_to(const_reference value) {
@@ -1233,7 +1237,7 @@ private:
     IOps::iter_attach(IOps::predecessor(value), i);
     detach(value);
     disposer(disposer_arg(value));
-    return make_iterator<Result>(i);
+    return convert_iterator<Result>(i);
   }
 
 public:
@@ -1283,7 +1287,7 @@ private:
         disposer(disposer_arg(value));
       } while (from != to);
     }
-    return make_iterator<Result>(to);
+    return convert_iterator<Result>(to);
   }
 
 public:
@@ -1419,7 +1423,7 @@ public:
     // Done if empty range.  This check simplifies remainder.
     if (from == to) {
       assert(n == 0, "incorrect range size: %zu, actual 0", n);
-      return make_iterator<iterator>(pos);
+      return convert_iterator<iterator>(pos);
     }
 
 #ifdef ASSERT
@@ -1474,7 +1478,7 @@ public:
 
     // Done if empty range.  This check simplifies remainder.
     if (from == to) {
-      return make_iterator<iterator>(pos);
+      return convert_iterator<iterator>(pos);
     }
 
 #ifdef ASSERT
@@ -1773,10 +1777,13 @@ private:
   }
 #endif
 
-  template<typename Result, typename From>
-  Result make_iterator(From i) const {
+  // This can convert const-element iterators to non-const-element iterators.
+  // It's the escape hatch from doing everything internally with const_iterators
+  // and potentially dropping the element's const qualifier at the public API.
+  template<typename To, typename From>
+  To convert_iterator(From i) const {
     assert_is_iterator(i);
-    return Impl::IOps<Result>::make_iterator(i);
+    return Impl::IOps<To>::convert_iterator(i);
   }
 
   // This can break the rules about putting const elements in non-const
