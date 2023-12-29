@@ -834,8 +834,8 @@ public:
   }
 
   /**
-   * Return true if this and other refer to the same element of a list,
-   * or both refer to end-of-list for the same list.
+   * Return true if this and other refer to the same element of a list, or
+   * refer to end-of-list for the same list, or are both singular.
    *
    * precondition: this and other are both valid iterators for the same list,
    * or both are singular.
