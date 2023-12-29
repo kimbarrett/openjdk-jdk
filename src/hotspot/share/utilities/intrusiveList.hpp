@@ -193,8 +193,8 @@ public:
 private:
   // _prev and _next are the links between elements / root entries in
   // an associated list.  The values of these members are type-erased
-  // void*.  The IntrusiveListImpl::IteratorOperations class is used
-  // to encode, decode, and manipulate the type-erased values.
+  // void*.  The IntrusiveListImpl::IOps class is used to encode,
+  // decode, and manipulate the type-erased values.
   //
   // Members are mutable and we deal exclusively with pointers to
   // const to make const_references and const_iterators easier to use;
@@ -324,7 +324,7 @@ private:
 
   NONCOPYABLE(IntrusiveListImpl);
 
-  // Tag manipulation for encoded void*; see IteratorOperations.
+  // Tag manipulation for encoded void*; see IOps.
   static const uintptr_t _tag_alignment = 2;
 
   static bool is_tagged_root_entry(const void* ptr) {
@@ -392,7 +392,7 @@ private:
   // iterators.  These are used to implement iterators and list
   // operations related to iterators, but are not part of the public
   // API for iterators.
-  template<typename Iterator> class IteratorOperations;
+  template<typename Iterator> class IOps;
 
   // Select which get_entry overload to call, based on the key value, using
   // SFINAE to prevent introducing a call site for the other.
@@ -463,10 +463,10 @@ struct IntrusiveListImpl::IsListType<IntrusiveList<T, has_size, key>>
   : public std::true_type
 {};
 
-// The IteratorOperations class provides operations for encoding,
-// decoding, and manipulating type-erased void* values representing
-// objects in a list.  The encoded void* provides a discriminated
-// union of the following:
+// The IOps class (short for IteratorOperations) provides operations for
+// encoding, decoding, and manipulating type-erased void* values representing
+// objects in a list.  The encoded void* provides a discriminated union of the
+// following:
 //
 // - T*: a pointer to a list element.
 // - IntrusiveListEntry*: a pointer to a list's root entry.
@@ -499,11 +499,10 @@ struct IntrusiveListImpl::IsListType<IntrusiveList<T, has_size, key>>
 // element.  Similarly, incrementing an iterator consists of just a load from
 // the iterator's internal value plus a constant offset.
 //
-// IteratorOperations also provides a suite of operations for
-// manipulating iterators and list elements, making use of that
-// encoding.  This allows the implementation of iterators and lists to
-// be written in terms of these higher level operations, without
-// needing to deal with the underlying encoding directly.
+// IOps also provides a suite of operations for manipulating iterators and
+// list elements, making use of that encoding.  This allows the implementation
+// of iterators and lists to be written in terms of these higher level
+// operations, without needing to deal with the underlying encoding directly.
 //
 // Note that various functions provided by this class take a const_reference
 // argument.  This means some of these functions may break the rule against
@@ -518,7 +517,7 @@ struct IntrusiveListImpl::IsListType<IntrusiveList<T, has_size, key>>
 // of having improper usage fail to compile at that level rather than deep in
 // the implementation.  See splice() for example.
 template<typename Iterator>
-class IntrusiveListImpl::IteratorOperations : AllStatic {
+class IntrusiveListImpl::IOps : AllStatic {
   using Impl = IntrusiveListImpl;
   using ListTraits = typename Iterator::ListTraits;
   using const_reference = typename ListTraits::const_reference;
@@ -645,7 +644,7 @@ public:
 
   template<typename Iterator2>
   static Iterator make_iterator(Iterator2 i) {
-    return Iterator(IteratorOperations<Iterator2>::encoded_value(i));
+    return Iterator(IOps<Iterator2>::encoded_value(i));
   }
 
   static Iterator make_iterator_to(const_reference value) {
@@ -704,7 +703,7 @@ class IntrusiveListImpl::IteratorImpl {
 
   using Impl = IntrusiveListImpl;
   using ListTraits = Impl::ListTraits<T>;
-  using IOps = Impl::IteratorOperations<IteratorImpl>;
+  using IOps = Impl::IOps<IteratorImpl>;
 
   // Test whether From is an iterator type different from this type that can
   // be implicitly converted to this iterator type.  A const_element iterator
@@ -743,7 +742,7 @@ public:
   /** Implicit conversion from non-const to const element type. */
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
   IteratorImpl(const From& other)
-    : _encoded_value(IteratorOperations<From>::encoded_value(other))
+    : _encoded_value(Impl::IOps<From>::encoded_value(other))
   {}
 
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
@@ -894,7 +893,7 @@ public:
 
 private:
   // An iterator refers to either an object in the list, the root
-  // entry of the list, or null if singular.  See IteratorOperations
+  // entry of the list, or null if singular.  See IOps
   // for details of the encoding.
   const void* _encoded_value;
 
@@ -1101,7 +1100,7 @@ public:
    * complexity: constant.
    */
   iterator begin() {
-    return Impl::IteratorOperations<iterator>::make_begin_iterator(_impl);
+    return Impl::IOps<iterator>::make_begin_iterator(_impl);
   }
 
   const_iterator begin() const {
@@ -1109,7 +1108,7 @@ public:
   }
 
   const_iterator cbegin() const {
-    return Impl::IteratorOperations<const_iterator>::make_begin_iterator(_impl);
+    return Impl::IOps<const_iterator>::make_begin_iterator(_impl);
   }
 
   /**
@@ -1118,7 +1117,7 @@ public:
    * complexity: constant.
    */
   iterator end() {
-    return Impl::IteratorOperations<iterator>::make_end_iterator(_impl);
+    return Impl::IOps<iterator>::make_end_iterator(_impl);
   }
 
   const_iterator end() const {
@@ -1126,7 +1125,7 @@ public:
   }
 
   const_iterator cend() const {
-    return Impl::IteratorOperations<const_iterator>::make_end_iterator(_impl);
+    return Impl::IOps<const_iterator>::make_end_iterator(_impl);
   }
 
   /**
@@ -1136,7 +1135,7 @@ public:
    * complexity: constant.
    */
   reverse_iterator rbegin() {
-    return Impl::IteratorOperations<reverse_iterator>::make_begin_iterator(_impl);
+    return Impl::IOps<reverse_iterator>::make_begin_iterator(_impl);
   }
 
   const_reverse_iterator rbegin() const {
@@ -1144,7 +1143,7 @@ public:
   }
 
   const_reverse_iterator crbegin() const {
-    return Impl::IteratorOperations<const_reverse_iterator>::make_begin_iterator(_impl);
+    return Impl::IOps<const_reverse_iterator>::make_begin_iterator(_impl);
   }
 
   /**
@@ -1154,7 +1153,7 @@ public:
    * complexity: constant.
    */
   reverse_iterator rend() {
-    return Impl::IteratorOperations<reverse_iterator>::make_end_iterator(_impl);
+    return Impl::IOps<reverse_iterator>::make_end_iterator(_impl);
   }
 
   const_reverse_iterator rend() const {
@@ -1162,7 +1161,7 @@ public:
   }
 
   const_reverse_iterator crend() const {
-    return Impl::IteratorOperations<const_reverse_iterator>::make_end_iterator(_impl);
+    return Impl::IOps<const_reverse_iterator>::make_end_iterator(_impl);
   }
 
   /**
@@ -1228,7 +1227,7 @@ private:
 
   template<typename Result, typename Iterator, typename Disposer>
   Result erase_one_and_dispose(Iterator i, Disposer disposer) {
-    using IOps = Impl::IteratorOperations<Iterator>;
+    using IOps = Impl::IOps<Iterator>;
     assert_is_iterator(i);
     const_reference value = *i++;
     IOps::iter_attach(IOps::predecessor(value), i);
@@ -1273,7 +1272,7 @@ private:
 
   template<typename Result, typename Iterator, typename Disposer>
   Result erase_range_and_dispose(Iterator from, Iterator to, Disposer disposer) {
-    using IOps = Impl::IteratorOperations<Iterator>;
+    using IOps = Impl::IOps<Iterator>;
     assert_is_iterator(from);
     assert_is_iterator(to);
     if (from != to) {
@@ -1366,7 +1365,7 @@ private:
   Result insert_impl(Iterator pos, reference value) {
     assert(Impl::entry_list(get_entry(value)) == nullptr, "precondition");
     assert_is_iterator(pos);
-    using IOps = Impl::IteratorOperations<Iterator>;
+    using IOps = Impl::IOps<Iterator>;
     IOps::attach(IOps::iter_predecessor(pos), value);
     IOps::attach(value, pos);
     DEBUG_ONLY(set_list(value, &_impl);)
@@ -1548,7 +1547,7 @@ private:
                            typename FromList::iterator from,
                            typename FromList::const_iterator to) {
     assert(from != to, "precondition");
-    using IOps = Impl::IteratorOperations<const_iterator>;
+    using IOps = Impl::IOps<const_iterator>;
     // to is end of non-empty range, so has a dereferenceable predecessor.
     const_iterator to_pred = --const_iterator(to); // Fetch before clobbered
     // from is dereferenceable since it heads a non-empty range.
@@ -1628,7 +1627,7 @@ public:
   iterator splice(const_iterator pos,
                   FromList& from_list,
                   typename FromList::iterator from) {
-    using IOps = Impl::IteratorOperations<const_iterator>;
+    using IOps = Impl::IOps<const_iterator>;
 
     assert_is_iterator(pos);
     from_list.assert_is_iterator(from);
@@ -1756,7 +1755,7 @@ private:
 
   template<typename Iterator>
   void assert_is_iterator(const Iterator& i) const {
-    using IOps = Impl::IteratorOperations<Iterator>;
+    using IOps = Impl::IOps<Iterator>;
     assert(IOps::list_ptr(i) == &_impl,
            "Iterator " PTR_FORMAT " not for this list " PTR_FORMAT,
            p2i(IOps::encoded_value(i)), p2i(this));
@@ -1777,7 +1776,7 @@ private:
   template<typename Result, typename From>
   Result make_iterator(From i) const {
     assert_is_iterator(i);
-    return Impl::IteratorOperations<Result>::make_iterator(i);
+    return Impl::IOps<Result>::make_iterator(i);
   }
 
   // This can break the rules about putting const elements in non-const
@@ -1786,7 +1785,7 @@ private:
   template<typename Iterator>
   Iterator make_iterator_to(const_reference value) const {
     assert_is_element(value);
-    return Impl::IteratorOperations<Iterator>::make_iterator_to(value);
+    return Impl::IOps<Iterator>::make_iterator_to(value);
   }
 
   struct NopDisposer {
