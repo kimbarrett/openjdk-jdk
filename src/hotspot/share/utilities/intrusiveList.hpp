@@ -301,6 +301,11 @@ template<typename T,
          IntrusiveListEntry::Key key = IntrusiveListEntry::DefaultKey>
 class IntrusiveList;
 
+template<typename T,
+         IntrusiveListEntry::Key entry_key,
+         bool is_forward>
+class IntrusiveListIteratorImpl;
+
 // IntrusiveListImpl provides implementation support for IntrusiveList.
 // There's nothing for clients to see here. That support is all private, with
 // the IntrusiveList class given access via friendship.
@@ -311,6 +316,11 @@ public:
 private:
   template<typename T, bool, IntrusiveListEntry::Key>
   friend class IntrusiveList;
+
+  template<typename T,
+           IntrusiveListEntry::Key entry_key,
+           bool is_forward>
+  friend class IntrusiveListIteratorImpl;
 
   using size_type = size_t;
   using difference_type = ptrdiff_t;
@@ -378,13 +388,6 @@ private:
     for ( ; from != to; ++result, ++from) {}
     return result;
   }
-
-  // Iterator support.  IntrusiveList defines its iterator types as
-  // specializations of this class.
-  template<typename T,
-           IntrusiveListEntry::Key entry_key,
-           bool is_forward>
-  class IteratorImpl;
 
   // Iterator support.  Provides (static) functions for manipulating
   // iterators.  These are used to implement iterators and list
@@ -474,12 +477,12 @@ struct IntrusiveListImpl::IsListType<IntrusiveList<T, has_size, key>>
 // previous object in a list, e.g. to represent the links between
 // objects.
 //
-// IteratorImpl uses such encoded values to refer to the object that
-// represents the iterator.  A singular iterator is represented by an
-// encoded null.  A dereferenceable iterator is represented by an
-// encoded pointer to a list element.  An encoded list root entry is
-// used to represent either an end-of-list or before-the-beginning
-// iterator, depending on context.
+// IntrusiveListIteratorImpl uses such encoded values to refer to the object
+// that represents the iterator.  A singular iterator is represented by an
+// encoded null.  A dereferenceable iterator is represented by an encoded
+// pointer to a list element.  An encoded list root entry is used to represent
+// either an end-of-list or before-the-beginning iterator, depending on
+// context.
 //
 // The encoding of these values uses a tagged void pointer scheme.
 // null represents itself.  A list element (T*) is distinguished from
@@ -682,9 +685,10 @@ public:
 };
 
 /**
- * Bi-directional constant (e.g. not output) iterator for iterating
- * over the elements of an IntrusiveList.  The IntrusiveList class
- * uses specializations of this class as its iterator types.
+ * Bi-directional constant (e.g. not output) iterator for iterating over the
+ * elements of an IntrusiveList.  The IntrusiveList class uses specializations
+ * of this class as its iterator nested types.  Clients should use those
+ * nested types rather than directly naming specializations of this class.
  *
  * An iterator may be either const-element or non-const-element.  The value
  * type of a const-element iterator is const-qualified, and a const-element
@@ -696,7 +700,7 @@ public:
 template<typename T,
          IntrusiveListEntry::Key entry_key,
          bool is_forward>
-class IntrusiveListImpl::IteratorImpl {
+class IntrusiveListIteratorImpl {
   friend class IntrusiveListImpl;
 
   static const bool _is_forward = is_forward;
@@ -705,7 +709,7 @@ class IntrusiveListImpl::IteratorImpl {
 
   using Impl = IntrusiveListImpl;
   using ListTraits = Impl::ListTraits<T>;
-  using IOps = Impl::IOps<IteratorImpl>;
+  using IOps = Impl::IOps<IntrusiveListIteratorImpl>;
 
   // Test whether From is an iterator type different from this type that can
   // be implicitly converted to this iterator type.  A const_element iterator
@@ -713,7 +717,9 @@ class IntrusiveListImpl::IteratorImpl {
   // non-const-element iterator type.
   template<typename From>
   static constexpr bool is_convertible_iterator() {
-    using NonConst = IteratorImpl<std::remove_const_t<T>, entry_key, _is_forward>;
+    using NonConst = IntrusiveListIteratorImpl<std::remove_const_t<T>,
+                                               entry_key,
+                                               _is_forward>;
     return _is_const_element && std::is_same<From, NonConst>::value;
   }
 
@@ -735,21 +741,21 @@ public:
   // using iterator_category = std::bidirectional_iterator_tag;
 
   /** Construct a singular iterator. */
-  IteratorImpl() : _encoded_value(nullptr) {}
+  IntrusiveListIteratorImpl() : _encoded_value(nullptr) {}
 
-  ~IteratorImpl() = default;
-  IteratorImpl(const IteratorImpl&) = default;
-  IteratorImpl& operator=(const IteratorImpl&) = default;
+  ~IntrusiveListIteratorImpl() = default;
+  IntrusiveListIteratorImpl(const IntrusiveListIteratorImpl&) = default;
+  IntrusiveListIteratorImpl& operator=(const IntrusiveListIteratorImpl&) = default;
 
   /** Implicit conversion from non-const to const element type. */
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
-  IteratorImpl(const From& other)
+  IntrusiveListIteratorImpl(const From& other)
     : _encoded_value(Impl::IOps<From>::encoded_value(other))
   {}
 
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
-  IteratorImpl& operator=(const From& other) {
-    return *this = IteratorImpl(other);
+  IntrusiveListIteratorImpl& operator=(const From& other) {
+    return *this = IntrusiveListIteratorImpl(other);
   }
 
   /**
@@ -781,7 +787,7 @@ public:
    * postcondition: this is dereferenceable or end-of-list.
    * complexity: constant.
    */
-  IteratorImpl& operator++() {
+  IntrusiveListIteratorImpl& operator++() {
     IOps::assert_is_in_some_list(*this);
     *this = IOps::successor(this->operator*());
     return *this;
@@ -796,8 +802,8 @@ public:
    * postcondition: this is dereferenceable or end-of-list.
    * complexity: constant.
    */
-  IteratorImpl operator++(int) {
-    IteratorImpl result = *this;
+  IntrusiveListIteratorImpl operator++(int) {
+    IntrusiveListIteratorImpl result = *this;
     this->operator++();
     return result;
   }
@@ -811,7 +817,7 @@ public:
    * postcondition: this is dereferenceable.
    * complexity: constant.
    */
-  IteratorImpl& operator--() {
+  IntrusiveListIteratorImpl& operator--() {
     IOps::assert_is_in_some_list(*this);
     *this = IOps::iter_predecessor(*this);
     // Must not have been (r)begin iterator.
@@ -828,8 +834,8 @@ public:
    * postcondition: this is dereferenceable.
    * complexity: constant.
    */
-  IteratorImpl operator--(int) {
-    IteratorImpl result = *this;
+  IntrusiveListIteratorImpl operator--(int) {
+    IntrusiveListIteratorImpl result = *this;
     this->operator--();
     return result;
   }
@@ -842,7 +848,7 @@ public:
    * or both are singular.
    * complexity: constant.
    */
-  bool operator==(const IteratorImpl& other) const {
+  bool operator==(const IntrusiveListIteratorImpl& other) const {
     // C++14 24.2.5/2: The domain of == for iterators is that of iterators
     // over the same underlying sequence.  However, C++14 additionally permits
     // comparison of value-initialized iterators, which compare equal to other
@@ -871,25 +877,24 @@ public:
    * or both are singular.
    * complexity: constant.
    */
-  bool operator!=(const IteratorImpl& other) const {
+  bool operator!=(const IntrusiveListIteratorImpl& other) const {
     return !(*this == other);
   }
 
-  // Add ConvertibleFrom OP IteratorImpl overloads, because these are
-  // not handled by the corresponding member function plus implicit
-  // conversions.  For example, const_iterator == iterator is handled
-  // by const_iterator::operator==(const_iterator) plus implicit
-  // conversion of iterator to const_iterator.  But we need an
-  // additional overload to handle iterator == const_iterator when those
-  // types are different.
+  // Add ConvertibleFrom OP IntrusiveListIteratorImpl overloads, because these
+  // are not handled by the corresponding member function plus implicit
+  // conversions.  For example, const_iterator == iterator is handled by
+  // const_iterator::operator==(const_iterator) plus implicit conversion of
+  // iterator to const_iterator.  But we need an additional overload to handle
+  // iterator == const_iterator when those types are different.
 
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
-  friend bool operator==(const From& lhs, const IteratorImpl& rhs) {
+  friend bool operator==(const From& lhs, const IntrusiveListIteratorImpl& rhs) {
     return rhs == lhs;
   }
 
   template<typename From, ENABLE_IF(is_convertible_iterator<From>())>
-  friend bool operator!=(const From& lhs, const IteratorImpl& rhs) {
+  friend bool operator!=(const From& lhs, const IntrusiveListIteratorImpl& rhs) {
     return rhs != lhs;
   }
 
@@ -908,7 +913,7 @@ private:
   // class for carrying the encoded void* to iterator construction.]
   template<typename EncodedValue,
            ENABLE_IF(std::is_same<EncodedValue, const void*>::value)>
-  explicit IteratorImpl(EncodedValue encoded_value)
+  explicit IntrusiveListIteratorImpl(EncodedValue encoded_value)
     : _encoded_value(encoded_value)
   {}
 };
@@ -992,19 +997,19 @@ public:
 
   /** Forward iterator type. */
   using iterator =
-    Impl::IteratorImpl<T, entry_key, true>;
+    IntrusiveListIteratorImpl<T, entry_key, true>;
 
   /** Forward iterator type with const elements. */
   using const_iterator =
-    Impl::IteratorImpl<std::add_const_t<T>, entry_key, true>;
+    IntrusiveListIteratorImpl<std::add_const_t<T>, entry_key, true>;
 
   /** Reverse iterator type. */
   using reverse_iterator =
-    Impl::IteratorImpl<T, entry_key, false>;
+    IntrusiveListIteratorImpl<T, entry_key, false>;
 
   /** Reverse iterator type with const elements. */
   using const_reverse_iterator =
-    Impl::IteratorImpl<std::add_const_t<T>, entry_key, false>;
+    IntrusiveListIteratorImpl<std::add_const_t<T>, entry_key, false>;
 
   /** Make an empty list. */
   IntrusiveList() : _impl() {}
