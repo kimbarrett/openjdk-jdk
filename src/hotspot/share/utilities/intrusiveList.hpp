@@ -309,15 +309,13 @@ public:
   struct TestSupport;            // For unit tests
 
 private:
-  using Entry = IntrusiveListEntry;
-
-  template<typename T, bool, Entry::Key>
+  template<typename T, bool, IntrusiveListEntry::Key>
   friend class IntrusiveList;
 
   using size_type = size_t;
   using difference_type = ptrdiff_t;
 
-  Entry _root;
+  IntrusiveListEntry _root;
 
   IntrusiveListImpl();
   ~IntrusiveListImpl() NOT_DEBUG(= default);
@@ -331,22 +329,22 @@ private:
     return !is_aligned(ptr, _tag_alignment);
   }
 
-  static const void* add_tag_to_root_entry(const Entry* entry) {
+  static const void* add_tag_to_root_entry(const IntrusiveListEntry* entry) {
     assert(is_aligned(entry, _tag_alignment), "must be");
     const void* untagged = entry;
     return static_cast<const char*>(untagged) + 1;
   }
 
-  static const Entry* remove_tag_from_root_entry(const void* ptr) {
+  static const IntrusiveListEntry* remove_tag_from_root_entry(const void* ptr) {
     assert(is_tagged_root_entry(ptr), "precondition");
     const void* untagged = static_cast<const char*>(ptr) - 1;
     assert(is_aligned(untagged, _tag_alignment), "must be");
-    return static_cast<const Entry*>(untagged);
+    return static_cast<const IntrusiveListEntry*>(untagged);
   }
 
-  const Entry* root_entry() const { return &_root; }
+  const IntrusiveListEntry* root_entry() const { return &_root; }
 
-  static void detach(const Entry& entry) {
+  static void detach(const IntrusiveListEntry& entry) {
     entry._prev = nullptr;
     entry._next = nullptr;
     DEBUG_ONLY(entry._list = nullptr;)
@@ -397,15 +395,15 @@ private:
   // Select which get_entry overload to call, based on the key value, using
   // SFINAE to prevent introducing a call site for the other.
   // C++17 if-constexpr simplification candidate.
-  template<Entry::Key entry_key, typename T,
-           ENABLE_IF(entry_key == Entry::DefaultKey)>
-  static const Entry& get_entry(const T& v) {
+  template<IntrusiveListEntry::Key entry_key, typename T,
+           ENABLE_IF(entry_key == IntrusiveListEntry::DefaultKey)>
+  static const IntrusiveListEntry& get_entry(const T& v) {
     return IntrusiveListAccess<T>::get_entry(v);
   }
 
-  template<Entry::Key entry_key, typename T,
-           ENABLE_IF(entry_key != Entry::DefaultKey)>
-  static const Entry& get_entry(const T& v) {
+  template<IntrusiveListEntry::Key entry_key, typename T,
+           ENABLE_IF(entry_key != IntrusiveListEntry::DefaultKey)>
+  static const IntrusiveListEntry& get_entry(const T& v) {
     return IntrusiveListAccess<T>::get_entry(v, entry_key);
   }
 
@@ -416,9 +414,9 @@ private:
 
 #ifdef ASSERT
   // Get entry's containing list; null if entry not in a list.
-  static const IntrusiveListImpl* entry_list(const Entry& entry);
+  static const IntrusiveListImpl* entry_list(const IntrusiveListEntry& entry);
   // Set entry's containing list; list may be null.
-  static void set_entry_list(const Entry& entry, IntrusiveListImpl* list);
+  static void set_entry_list(const IntrusiveListEntry& entry, IntrusiveListImpl* list);
 #endif // ASSERT
 };
 
@@ -528,11 +526,11 @@ class IntrusiveListImpl::IOps : AllStatic {
     return &value;
   }
 
-  static const void* make_encoded_value(const Entry* entry) {
+  static const void* make_encoded_value(const IntrusiveListEntry* entry) {
     return add_tag_to_root_entry(entry);
   }
 
-  static const Entry& resolve_to_entry(Iterator i) {
+  static const IntrusiveListEntry& resolve_to_entry(Iterator i) {
     assert_not_singular(i);
     const void* encoded = encoded_value(i);
     if (is_tagged_root_entry(encoded)) {
@@ -591,7 +589,7 @@ public:
 
   // Corresponding is_element is not used, so not provided.
 
-  static const Entry& get_entry(const_reference v) {
+  static const IntrusiveListEntry& get_entry(const_reference v) {
     return Impl::get_entry<Iterator::_entry_key>(v);
   }
 
@@ -656,7 +654,7 @@ public:
   }
 
   static Iterator make_begin_iterator(const Impl& impl) {
-    const Entry* entry = impl.root_entry();
+    const IntrusiveListEntry* entry = impl.root_entry();
     return Iterator(_is_forward ? entry->_next : entry->_prev);
   }
 
@@ -924,7 +922,6 @@ class IntrusiveList : public IntrusiveListImpl::SizeBase<has_size> {
   // Give access for unit testing.
   friend struct IntrusiveListImpl::TestSupport;
 
-  using Entry = IntrusiveListEntry;
   using Impl = IntrusiveListImpl;
   using ListTraits = Impl::ListTraits<T>;
 
@@ -1811,7 +1808,7 @@ private:
     this->decrease_size(1);
   }
 
-  static const Entry& get_entry(const_reference v) {
+  static const IntrusiveListEntry& get_entry(const_reference v) {
     return Impl::get_entry<entry_key>(v);
   }
 };

@@ -54,7 +54,7 @@ IntrusiveListImpl::~IntrusiveListImpl() {
 
 #ifdef ASSERT
 
-const IntrusiveListImpl* IntrusiveListImpl::entry_list(const Entry& entry) {
+const IntrusiveListImpl* IntrusiveListImpl::entry_list(const IntrusiveListEntry& entry) {
   // Ensure consistency.
   if (entry._list == nullptr) {
     assert(entry._next == nullptr, "invariant");
@@ -66,7 +66,7 @@ const IntrusiveListImpl* IntrusiveListImpl::entry_list(const Entry& entry) {
   return entry._list;
 }
 
-void IntrusiveListImpl::set_entry_list(const Entry& entry, IntrusiveListImpl* list) {
+void IntrusiveListImpl::set_entry_list(const IntrusiveListEntry& entry, IntrusiveListImpl* list) {
   entry._list = list;
 }
 
