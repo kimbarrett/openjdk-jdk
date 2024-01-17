@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -44,7 +44,7 @@
 // generate a call to a similar but slower 64-bit version when calling with
 // a 32-bit integer type.
 template <typename T>
-inline unsigned population_count(T x) {
+constexpr unsigned population_count(T x) {
   STATIC_ASSERT(BitsPerWord <= 128);
   STATIC_ASSERT(BitsPerByte == 8);
   STATIC_ASSERT(std::is_integral<T>::value);
@@ -65,7 +65,8 @@ inline unsigned population_count(T x) {
   // The preceding multiply by z_ones is the only place where the intermediate
   // calculations can exceed the range of T. We need to discard any such excess
   // before the right-shift, hence the conversion back to T.
-  return checked_cast<unsigned>(static_cast<T>(r) >> (((sizeof(T) - 1) * BitsPerByte)));
+  T result = static_cast<T>(r) >> (((sizeof(T) - 1) * BitsPerByte));
+  return static_cast<unsigned>(result); // Safe potentially narrowing conversion.
 }
 
 #endif // SHARE_UTILITIES_POPULATION_COUNT_HPP

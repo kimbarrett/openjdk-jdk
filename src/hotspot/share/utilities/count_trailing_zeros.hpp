@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -44,11 +44,11 @@
  *****************************************************************************/
 #if defined(TARGET_COMPILER_gcc)
 
-inline unsigned count_trailing_zeros_32(uint32_t x) {
+constexpr unsigned count_trailing_zeros_32(uint32_t x) {
   return __builtin_ctz(x);
 }
 
-inline unsigned count_trailing_zeros_64(uint64_t x) {
+constexpr unsigned count_trailing_zeros_64(uint64_t x) {
   return __builtin_ctzll(x);
 }
 
@@ -64,13 +64,13 @@ inline unsigned count_trailing_zeros_64(uint64_t x) {
 #pragma intrinsic(_BitScanForward64)
 #endif
 
-inline unsigned count_trailing_zeros_32(uint32_t x) {
+constexpr unsigned count_trailing_zeros_32(uint32_t x) {
   unsigned long index;
   _BitScanForward(&index, x);
   return index;
 }
 
-inline unsigned count_trailing_zeros_64(uint64_t x) {
+constexpr unsigned count_trailing_zeros_64(uint64_t x) {
   unsigned long index;
 #ifdef _LP64
   _BitScanForward64(&index, x);
@@ -91,11 +91,11 @@ inline unsigned count_trailing_zeros_64(uint64_t x) {
 
 #include <builtins.h>
 
-inline unsigned count_trailing_zeros_32(uint32_t x) {
+constexpr unsigned count_trailing_zeros_32(uint32_t x) {
   return __cnttz4(x);
 }
 
-inline unsigned count_trailing_zeros_64(uint64_t x) {
+constexpr unsigned count_trailing_zeros_64(uint64_t x) {
   return __cnttz8(x);
 }
 
@@ -110,7 +110,7 @@ inline unsigned count_trailing_zeros_64(uint64_t x) {
 template<typename T,
          ENABLE_IF(std::is_integral<T>::value),
          ENABLE_IF(sizeof(T) <= sizeof(uint64_t))>
-inline unsigned count_trailing_zeros(T x) {
+constexpr unsigned count_trailing_zeros(T x) {
   assert(x != 0, "precondition");
   return (sizeof(x) <= sizeof(uint32_t)) ?
          count_trailing_zeros_32(static_cast<uint32_t>(x)) :

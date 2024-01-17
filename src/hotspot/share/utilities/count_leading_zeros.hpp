@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,7 +36,8 @@
 // We implement and support variants for 8, 16, 32 and 64 bit integral types.
 template <typename T, size_t n> struct CountLeadingZerosImpl;
 
-template <typename T> unsigned count_leading_zeros(T v) {
+template <typename T>
+constexpr unsigned count_leading_zeros(T v) {
   assert(v != 0, "precondition");
   return CountLeadingZerosImpl<T, sizeof(T)>::doit(v);
 }
@@ -47,25 +48,25 @@ template <typename T> unsigned count_leading_zeros(T v) {
 #if defined(TARGET_COMPILER_gcc)
 
 template <typename T> struct CountLeadingZerosImpl<T, 1> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __builtin_clz((uint32_t)v & 0xFF) - 24u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 2> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __builtin_clz((uint32_t)v & 0xFFFF) - 16u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 4> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __builtin_clz(v);
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 8> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __builtin_clzll(v);
   }
 };
@@ -83,7 +84,7 @@ template <typename T> struct CountLeadingZerosImpl<T, 8> {
 #endif
 
 template <typename T> struct CountLeadingZerosImpl<T, 1> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     unsigned long index;
     _BitScanReverse(&index, (uint32_t)v & 0xFF);
     return 7u - index;
@@ -91,7 +92,7 @@ template <typename T> struct CountLeadingZerosImpl<T, 1> {
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 2> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     unsigned long index;
     _BitScanReverse(&index, (uint32_t)v & 0xFFFF);
     return 15u - index;
@@ -99,7 +100,7 @@ template <typename T> struct CountLeadingZerosImpl<T, 2> {
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 4> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     unsigned long index;
     _BitScanReverse(&index, v);
     return 31u - index;
@@ -107,7 +108,7 @@ template <typename T> struct CountLeadingZerosImpl<T, 4> {
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 8> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
 #ifdef _LP64
     unsigned long index;
     _BitScanReverse64(&index, v);
@@ -131,25 +132,25 @@ template <typename T> struct CountLeadingZerosImpl<T, 8> {
 #include <builtins.h>
 
 template <typename T> struct CountLeadingZerosImpl<T, 1> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __cntlz4((uint32_t)v & 0xFF) - 24u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 2> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __cntlz4((uint32_t)v & 0xFFFF) - 16u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 4> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __cntlz4(v);
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 8> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return __cntlz8(v);
   }
 };
@@ -159,7 +160,7 @@ template <typename T> struct CountLeadingZerosImpl<T, 8> {
  *****************************************************************************/
 #else
 
-inline uint32_t count_leading_zeros_32(uint32_t x) {
+constexpr uint32_t count_leading_zeros_32(uint32_t x) {
   assert(x != 0, "precondition");
 
   // Efficient and portable fallback implementation:
@@ -183,25 +184,25 @@ inline uint32_t count_leading_zeros_32(uint32_t x) {
 }
 
 template <typename T> struct CountLeadingZerosImpl<T, 1> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return count_leading_zeros_32((uint32_t)v & 0xFF) - 24u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 2> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return count_leading_zeros_32((uint32_t)v & 0xFFFF) - 16u;
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 4> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     return count_leading_zeros_32(v);
   }
 };
 
 template <typename T> struct CountLeadingZerosImpl<T, 8> {
-  static unsigned doit(T v) {
+  static constexpr unsigned doit(T v) {
     uint64_t high = ((uint64_t)v) >> 32ULL;
     if (high != 0) {
       return count_leading_zeros_32((uint32_t)high);
