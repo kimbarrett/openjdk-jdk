@@ -573,6 +573,44 @@ private:
   int _index;
 };
 
+class ObjArrayScanState {
+  oop _source;
+  oop _destination;
+  int _size;                    // FIXME: make this size_t
+  volatile int _index;          // FIXME: make this size_t
+  volatile uint _refcount;
+
+  ObjArrayScanState(oop src, oop dst, int size);
+  ~ObjArrayScanState() = default;
+
+  NONCOPYABLE(ObjArrayScanState);
+
+public:
+  class Allocator : public CHeapObj<mtGC> {
+    class Config;
+    class Impl;
+    Impl* _impl;
+
+  public:
+    Allocator();
+    ~Allocator();
+
+    NONCOPYABLE(Allocator);
+
+    ObjArrayScanState* allocate(oop src, oop dst, int size);
+    void release(ObjArrayScanState* state);
+  };
+
+  void add_references(uint count);
+  // Returns true if releasing the last reference.
+  bool release_reference();
+
+  oop source() { return _source; }
+  oop destination() { return _destination; }
+  int size() const { return _size; }
+  volatile int* index_ptr() { return &_index; }
+};
+
 // Wrapper over an oop that is a partially scanned array.
 // Can be converted to a ScannerTask for placement in associated task queues.
 // Refers to the partially copied source array oop.

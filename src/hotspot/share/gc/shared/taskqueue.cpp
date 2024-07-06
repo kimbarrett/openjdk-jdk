@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "gc/shared/freeListAllocator.hpp"
 #include "gc/shared/taskqueue.hpp"
 #include "oops/oop.inline.hpp"
 #include "logging/log.hpp"
@@ -31,6 +32,7 @@
 #include "runtime/os.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/stack.inline.hpp"
+#include <new>
 
 #if TASKQUEUE_STATS
 const char * const TaskQueueStats::_names[last_stat_id] = {
@@ -122,3 +124,85 @@ bool ObjArrayTask::is_valid() const {
       _index < objArrayOop(_obj)->length();
 }
 #endif // ASSERT
+
+class ObjArrayScanState::Allocator::Config : public FreeListConfig {
+public:
+  Config();
+  void* allocate() override;
+  void deallocate(void* node) override;
+};
+
+ObjArrayScanState::Allocator::Config::Config()
+  : FreeListConfig(100)         // FIXME: configurable transfer threshold
+{}
+
+void* ObjArrayScanState::Allocator::Config::allocate() {
+  return NEW_C_HEAP_OBJ(ObjArrayScanState, mtGC);
+}
+
+void ObjArrayScanState::Allocator::Config::deallocate(void* node) {
+  FREE_C_HEAP_OBJ(node);
+}
+
+class ObjArrayScanState::Allocator::Impl : public CHeapObj<mtGC> {
+  Config _config;
+  FreeListAllocator _free_list;
+
+public:
+  Impl(const char* name);
+
+  NONCOPYABLE(Impl);
+
+  ObjArrayScanState* allocate(oop src, oop dst, int size);
+  void release(ObjArrayScanState* state);
+};
+
+ObjArrayScanState::Allocator::Impl::Impl(const char* name)
+  : _config(),
+    _free_list(name, &_config)
+{}
+
+ObjArrayScanState* ObjArrayScanState::Allocator::Impl::allocate(oop src, oop dst, int size) {
+  void* p = _free_list.allocate();
+  return ::new (p) ObjArrayScanState(src, dst, size);
+}
+
+void ObjArrayScanState::Allocator::Impl::release(ObjArrayScanState* state) {
+  state->~ObjArrayScanState();
+  _free_list.release(state);
+}
+
+ObjArrayScanState::Allocator::Allocator()
+  : _impl(new Impl("ObjArrayScanState allocator"))
+{}
+
+ObjArrayScanState::Allocator::~Allocator() {
+  delete _impl;
+}
+
+ObjArrayScanState* ObjArrayScanState::Allocator::allocate(oop src, oop dst, int size) {
+  return _impl->allocate(src, dst, size);
+}
+
+void ObjArrayScanState::Allocator::release(ObjArrayScanState* state) {
+  _impl->release(state);
+}
+
+void ObjArrayScanState::add_references(uint count) {
+  uint new_count = Atomic::add(&_refcount, count, memory_order_relaxed);
+  assert(new_count >= count, "reference count overflow");
+}
+
+bool ObjArrayScanState::release_reference() {
+  uint new_count = Atomic::sub(&_refcount, 1u);
+  assert(new_count + 1 != 0, "reference count underflow");
+  return new_count == 0;
+}
+
+ObjArrayScanState::ObjArrayScanState(oop src, oop dst, int size)
+  : _source(src),
+    _destination(dst),
+    _size(size),
+    _index(0),
+    _refcount(0)
+{}
