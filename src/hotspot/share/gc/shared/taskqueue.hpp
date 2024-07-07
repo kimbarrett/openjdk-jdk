@@ -580,7 +580,7 @@ class ObjArrayScanState {
   volatile int _index;          // FIXME: make this size_t
   volatile uint _refcount;
 
-  ObjArrayScanState(oop src, oop dst, int size);
+  ObjArrayScanState(oop src, oop dst, int index, int size);
   ~ObjArrayScanState() = default;
 
   NONCOPYABLE(ObjArrayScanState);
@@ -597,7 +597,7 @@ public:
 
     NONCOPYABLE(Allocator);
 
-    ObjArrayScanState* allocate(oop src, oop dst, int size);
+    ObjArrayScanState* allocate(oop src, oop dst, int index, int size);
     void release(ObjArrayScanState* state);
   };
 

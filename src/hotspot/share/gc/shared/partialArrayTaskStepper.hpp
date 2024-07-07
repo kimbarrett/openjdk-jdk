@@ -58,7 +58,7 @@ public:
   // the first partial task if the array is large enough to need splitting.
   // Returns a Step with _index being that index and _ncreate being the
   // initial number of partial tasks to enqueue.
-  inline Step start(int length, volatile int* index_addr) const;
+  inline Step start(int length) const;
 
   // FIXME comments
   // Increment to's length to claim the next chunk.  Returns a Step with

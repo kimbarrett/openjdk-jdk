@@ -246,12 +246,12 @@ void G1ParScanThreadState::do_partial_array(ObjArrayScanState* state) {
 
   G1HeapRegionAttr dest_attr = _g1h->region_attr(to_array);
   G1SkipCardEnqueueSetter x(&_scanner, dest_attr.is_new_survivor());
-  // Process claimed task.  The length of to_array is not correct, but
-  // fortunately the iteration ignores the length field and just relies
-  // on start/end.
+  // Process claimed task.
   to_array->oop_iterate_range(&_scanner,
                               step._index,
                               step._index + _partial_array_stepper.chunk_size());
+  // Release reference to the state, now that we're done with it.
+  // If that's the last reference, then release the state.
   if (state->release_reference()) {
     _partial_array_scan_state_allocator.release(state);
   }
@@ -268,22 +268,20 @@ void G1ParScanThreadState::start_partial_objarray(G1HeapRegionAttr dest_attr,
 
   objArrayOop to_array = objArrayOop(to_obj);
 
-  ObjArrayScanState* state =
-    _partial_array_scan_state_allocator.allocate(from_obj, to_obj, to_array->length());
-  PartialArrayTaskStepper::Step step
-    = _partial_array_stepper.start(state->size(), state->index_ptr());
+  int array_length = to_array->length();
+  PartialArrayTaskStepper::Step step = _partial_array_stepper.start(array_length);
 
   // Push any needed partial scan tasks.  Pushed before processing the
   // initial chunk to allow other workers to steal while we're processing.
   if (step._ncreate > 0) {
-    // FIXME what happens if the queue is flushed?  how do we avoid leaking
-    // any states that are in the queue?
+    ObjArrayScanState* state =
+      _partial_array_scan_state_allocator.allocate(from_obj, to_obj,
+                                                   step._index,
+                                                   array_length);
     state->add_references(step._ncreate);
     for (uint i = 0; i < step._ncreate; ++i) {
       push_on_queue(ScannerTask(state));
     }
-  } else {
-    _partial_array_scan_state_allocator.release(state);
   }
 
   // Skip the card enqueue iff the object (to_array) is in survivor region.

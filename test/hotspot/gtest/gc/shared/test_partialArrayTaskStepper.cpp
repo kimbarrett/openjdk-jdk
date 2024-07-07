@@ -33,7 +33,8 @@ using Stepper = PartialArrayTaskStepper;
 static int simulate(const Stepper* stepper,
                     int length,
                     volatile int* index_addr) {
-  Step init = stepper->start(length, index_addr);
+  Step init = stepper->start(length);
+  Atomic::store(index_addr, init._index);
   uint queue_count = init._ncreate;
   int task = 0;
   for ( ; queue_count > 0; ++task) {
@@ -46,7 +47,7 @@ static int simulate(const Stepper* stepper,
 
 static void run_test(int length, int chunk_size, uint n_workers) {
   const PartialArrayTaskStepper stepper(n_workers, chunk_size);
-  int index = 0;
+  int index;
   int tasks = simulate(&stepper, length, &index);
   ASSERT_EQ(length, index);
   ASSERT_EQ(tasks, length / chunk_size);

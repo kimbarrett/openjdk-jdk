@@ -153,7 +153,7 @@ public:
 
   NONCOPYABLE(Impl);
 
-  ObjArrayScanState* allocate(oop src, oop dst, int size);
+  ObjArrayScanState* allocate(oop src, oop dst, int index, int size);
   void release(ObjArrayScanState* state);
 };
 
@@ -162,9 +162,9 @@ ObjArrayScanState::Allocator::Impl::Impl(const char* name)
     _free_list(name, &_config)
 {}
 
-ObjArrayScanState* ObjArrayScanState::Allocator::Impl::allocate(oop src, oop dst, int size) {
+ObjArrayScanState* ObjArrayScanState::Allocator::Impl::allocate(oop src, oop dst, int index, int size) {
   void* p = _free_list.allocate();
-  return ::new (p) ObjArrayScanState(src, dst, size);
+  return ::new (p) ObjArrayScanState(src, dst, index, size);
 }
 
 void ObjArrayScanState::Allocator::Impl::release(ObjArrayScanState* state) {
@@ -180,12 +180,22 @@ ObjArrayScanState::Allocator::~Allocator() {
   delete _impl;
 }
 
-ObjArrayScanState* ObjArrayScanState::Allocator::allocate(oop src, oop dst, int size) {
-  return _impl->allocate(src, dst, size);
+ObjArrayScanState* ObjArrayScanState::Allocator::allocate(oop src, oop dst, int index, int size) {
+  return _impl->allocate(src, dst, index, size);
 }
 
 void ObjArrayScanState::Allocator::release(ObjArrayScanState* state) {
   _impl->release(state);
+}
+
+ObjArrayScanState::ObjArrayScanState(oop src, oop dst, int index, int size)
+  : _source(src),
+    _destination(dst),
+    _size(size),
+    _index(index),
+    _refcount(0)
+{
+  assert(index < size, "precondition");
 }
 
 void ObjArrayScanState::add_references(uint count) {
@@ -198,11 +208,3 @@ bool ObjArrayScanState::release_reference() {
   assert(new_count + 1 != 0, "reference count underflow");
   return new_count == 0;
 }
-
-ObjArrayScanState::ObjArrayScanState(oop src, oop dst, int size)
-  : _source(src),
-    _destination(dst),
-    _size(size),
-    _index(0),
-    _refcount(0)
-{}

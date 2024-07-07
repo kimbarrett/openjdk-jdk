@@ -35,18 +35,12 @@ int PartialArrayTaskStepper::chunk_size() const {
 }
 
 PartialArrayTaskStepper::Step
-PartialArrayTaskStepper::start(int length, volatile int* index_addr) const {
-  int end = length % _chunk_size; // End of initial chunk.
-  // Set to's length to end of initial chunk.  Partial tasks use that length
-  // field as the start of the next chunk to process.  Must be done before
-  // enqueuing partial scan tasks, in case other threads steal any of those
-  // tasks.
-  //
+PartialArrayTaskStepper::start(int length) const {
   // The value of end can be 0, either because of a 0-length array or
   // because length is a multiple of the chunk size.  Both of those are
   // relatively rare and handled in the normal course of the iteration, so
   // not worth doing anything special about here.
-  Atomic::store(index_addr, end);
+  int end = length % _chunk_size; // End of initial chunk.
 
   // If the initial chunk is the complete array, then don't need any partial
   // tasks.  Otherwise, start with just one partial task; see new task
