@@ -88,6 +88,7 @@ class G1ParScanThreadState : public CHeapObj<mtGC> {
   bool _old_gen_is_full;
   // Size (in elements) of a partial objArray task chunk.
   int _partial_objarray_chunk_size;
+  ObjArrayScanState::Allocator _partial_array_scan_state_allocator;
   PartialArrayTaskStepper _partial_array_stepper;
   StringDedup::Requests _string_dedup_requests;
 
@@ -140,7 +141,7 @@ public:
 
   void verify_task(narrowOop* task) const NOT_DEBUG_RETURN;
   void verify_task(oop* task) const NOT_DEBUG_RETURN;
-  void verify_task(PartialArrayScanTask task) const NOT_DEBUG_RETURN;
+  void verify_task(ObjArrayScanState* state) const NOT_DEBUG_RETURN;
   void verify_task(ScannerTask task) const NOT_DEBUG_RETURN;
 
   void push_on_queue(ScannerTask task);
@@ -169,7 +170,7 @@ public:
   size_t flush_stats(size_t* surviving_young_words, uint num_workers, BufferNodeList* buffer_log);
 
 private:
-  void do_partial_array(PartialArrayScanTask task);
+  void do_partial_array(ObjArrayScanState* state);
   void start_partial_objarray(G1HeapRegionAttr dest_dir, oop from, oop to);
 
   HeapWord* allocate_copy_slow(G1HeapRegionAttr* dest_attr,

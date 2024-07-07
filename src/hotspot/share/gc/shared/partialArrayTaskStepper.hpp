@@ -30,6 +30,8 @@
 
 // Helper for handling PartialArrayTasks.
 //
+// FIXME comments
+//
 // When an array is large, we want to split it up into chunks that can be
 // processed in parallel.  Each task (implicitly) represents such a chunk.
 // We can enqueue multiple tasks at the same time.  We want to enqueue
@@ -51,21 +53,21 @@ public:
     uint _ncreate;              // Number of new tasks to create.
   };
 
+  // FIXME comments
   // Set to's length to the end of the initial chunk, which is the start of
   // the first partial task if the array is large enough to need splitting.
   // Returns a Step with _index being that index and _ncreate being the
   // initial number of partial tasks to enqueue.
-  inline Step start(arrayOop from, arrayOop to) const;
+  inline Step start(int length, volatile int* index_addr) const;
 
+  // FIXME comments
   // Increment to's length to claim the next chunk.  Returns a Step with
   // _index being the starting index of the claimed chunk, _size being the
   // size of the step's chunk, and _ncreate being the number of additional
   // partial tasks to enqueue.
-  inline Step next(arrayOop from, arrayOop to) const;
+  inline Step next(int length, volatile int* index_addr) const;
 
   inline int chunk_size() const;
-
-  class TestSupport;            // For unit tests
 
 private:
   // Size (number of elements) of a chunk to process.
@@ -74,13 +76,6 @@ private:
   uint _task_limit;
   // Maximum number of new tasks to create when processing an existing task.
   uint _task_fanout;
-
-  // Split start/next into public part dealing with oops and private
-  // impl dealing with lengths and pointers to lengths, for unit testing.
-  // length is the actual length obtained from the from-space object.
-  // to_length_addr is the address of the to-space object's length value.
-  inline Step start_impl(int length, int* to_length_addr) const;
-  inline Step next_impl(int length, int* to_length_addr) const;
 };
 
 #endif // SHARE_GC_SHARED_PARTIALARRAYTASKSTEPPER_HPP

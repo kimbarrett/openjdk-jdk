@@ -35,7 +35,7 @@ int PartialArrayTaskStepper::chunk_size() const {
 }
 
 PartialArrayTaskStepper::Step
-PartialArrayTaskStepper::start_impl(int length, int* to_length_addr) const {
+PartialArrayTaskStepper::start(int length, volatile int* index_addr) const {
   int end = length % _chunk_size; // End of initial chunk.
   // Set to's length to end of initial chunk.  Partial tasks use that length
   // field as the start of the next chunk to process.  Must be done before
@@ -46,7 +46,7 @@ PartialArrayTaskStepper::start_impl(int length, int* to_length_addr) const {
   // because length is a multiple of the chunk size.  Both of those are
   // relatively rare and handled in the normal course of the iteration, so
   // not worth doing anything special about here.
-  *to_length_addr = end;
+  Atomic::store(index_addr, end);
 
   // If the initial chunk is the complete array, then don't need any partial
   // tasks.  Otherwise, start with just one partial task; see new task
@@ -56,18 +56,14 @@ PartialArrayTaskStepper::start_impl(int length, int* to_length_addr) const {
 }
 
 PartialArrayTaskStepper::Step
-PartialArrayTaskStepper::start(arrayOop from, arrayOop to) const {
-  return start_impl(from->length(), to->length_addr());
-}
-
-PartialArrayTaskStepper::Step
-PartialArrayTaskStepper::next_impl(int length, int* to_length_addr) const {
+PartialArrayTaskStepper::next(int length, volatile int* index_addr) const {
+  // FIXME comment
   // The start of the next task is in the length field of the to-space object.
   // Atomically increment by the chunk size to claim the associated chunk.
   // Because we limit the number of enqueued tasks to being no more than the
   // number of remaining chunks to process, we can use an atomic add for the
   // claim, rather than a CAS loop.
-  int start = Atomic::fetch_then_add(to_length_addr,
+  int start = Atomic::fetch_then_add(index_addr,
                                      _chunk_size,
                                      memory_order_relaxed);
 
@@ -104,11 +100,6 @@ PartialArrayTaskStepper::next_impl(int length, int* to_length_addr) const {
   uint ncreate = MIN2(_task_fanout, MIN2(remaining_tasks, _task_limit + 1) - pending);
   Step result = { start, ncreate };
   return result;
-}
-
-PartialArrayTaskStepper::Step
-PartialArrayTaskStepper::next(arrayOop from, arrayOop to) const {
-  return next_impl(from->length(), to->length_addr());
 }
 
 #endif // SHARE_GC_SHARED_PARTIALARRAYTASKSTEPPER_INLINE_HPP

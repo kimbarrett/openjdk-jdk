@@ -30,32 +30,15 @@
 using Step = PartialArrayTaskStepper::Step;
 using Stepper = PartialArrayTaskStepper;
 
-class PartialArrayTaskStepper::TestSupport : AllStatic {
-public:
-  static Step start(const Stepper* stepper,
-                    int length,
-                    int* to_length_addr) {
-    return stepper->start_impl(length, to_length_addr);
-  }
-
-  static Step next(const Stepper* stepper,
-                   int length,
-                   int* to_length_addr) {
-    return stepper->next_impl(length, to_length_addr);
-  }
-};
-
-using StepperSupport = PartialArrayTaskStepper::TestSupport;
-
 static int simulate(const Stepper* stepper,
                     int length,
-                    int* to_length_addr) {
-  Step init = StepperSupport::start(stepper, length, to_length_addr);
+                    volatile int* index_addr) {
+  Step init = stepper->start(length, index_addr);
   uint queue_count = init._ncreate;
   int task = 0;
   for ( ; queue_count > 0; ++task) {
     --queue_count;
-    Step step = StepperSupport::next(stepper, length, to_length_addr);
+    Step step = stepper->next(length, index_addr);
     queue_count += step._ncreate;
   }
   return task;
@@ -63,9 +46,9 @@ static int simulate(const Stepper* stepper,
 
 static void run_test(int length, int chunk_size, uint n_workers) {
   const PartialArrayTaskStepper stepper(n_workers, chunk_size);
-  int to_length;
-  int tasks = simulate(&stepper, length, &to_length);
-  ASSERT_EQ(length, to_length);
+  int index = 0;
+  int tasks = simulate(&stepper, length, &index);
+  ASSERT_EQ(length, index);
   ASSERT_EQ(tasks, length / chunk_size);
 }
 

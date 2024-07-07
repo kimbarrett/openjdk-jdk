@@ -611,20 +611,7 @@ public:
   volatile int* index_ptr() { return &_index; }
 };
 
-// Wrapper over an oop that is a partially scanned array.
-// Can be converted to a ScannerTask for placement in associated task queues.
-// Refers to the partially copied source array oop.
-class PartialArrayScanTask {
-  oop _src;
-
-public:
-  explicit PartialArrayScanTask(oop src_array) : _src(src_array) {}
-  // Trivially copyable.
-
-  oop to_source_array() const { return _src; }
-};
-
-// Discriminated union over oop*, narrowOop*, and PartialArrayScanTask.
+// Discriminated union over oop*, narrowOop*, and ObjArrayScanState.
 // Uses a low tag in the associated pointer to identify the category.
 // Used as a task queue element type.
 class ScannerTask {
@@ -662,8 +649,8 @@ public:
 
   explicit ScannerTask(narrowOop* p) : _p(encode(p, NarrowOopTag)) {}
 
-  explicit ScannerTask(PartialArrayScanTask t) :
-    _p(encode(t.to_source_array(), PartialArrayTag)) {}
+  explicit ScannerTask(ObjArrayScanState* state) :
+    _p(encode(state, PartialArrayTag)) {}
 
   // Trivially copyable.
 
@@ -677,7 +664,7 @@ public:
     return (raw_value() & NarrowOopTag) != 0;
   }
 
-  bool is_partial_array_task() const {
+  bool is_partial_array_state() const {
     return (raw_value() & PartialArrayTag) != 0;
   }
 
@@ -689,8 +676,8 @@ public:
     return static_cast<narrowOop*>(decode(NarrowOopTag));
   }
 
-  PartialArrayScanTask to_partial_array_task() const {
-    return PartialArrayScanTask(cast_to_oop(decode(PartialArrayTag)));
+  ObjArrayScanState* to_partial_array_state() const {
+    return static_cast<ObjArrayScanState*>(decode(PartialArrayTag));
   }
 };
 
