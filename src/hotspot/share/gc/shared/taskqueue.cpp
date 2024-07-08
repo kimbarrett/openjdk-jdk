@@ -27,8 +27,10 @@
 #include "gc/shared/taskqueue.hpp"
 #include "oops/oop.inline.hpp"
 #include "logging/log.hpp"
+#include "memory/arena.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/javaThread.hpp"
+#include "runtime/mutex.hpp"
 #include "runtime/os.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/stack.inline.hpp"
@@ -126,30 +128,40 @@ bool ObjArrayTask::is_valid() const {
 #endif // ASSERT
 
 class ObjArrayScanState::Allocator::Config : public FreeListConfig {
+  Mutex* _mutex;
+  Arena _arena;
+
 public:
-  Config();
+  Config(Mutex* mutex);
   void* allocate() override;
   void deallocate(void* node) override;
 };
 
-ObjArrayScanState::Allocator::Config::Config()
-  : FreeListConfig(100)         // FIXME: configurable transfer threshold
+ObjArrayScanState::Allocator::Config::Config(Mutex* mutex)
+  : FreeListConfig(100),     // FIXME: configurable transfer threshold
+    _mutex(mutex),
+    _arena(mtGC)
 {}
 
 void* ObjArrayScanState::Allocator::Config::allocate() {
-  return NEW_C_HEAP_OBJ(ObjArrayScanState, mtGC);
+  MutexLocker ml(_mutex, Mutex::_no_safepoint_check_flag);
+  return NEW_ARENA_OBJ(&_arena, ObjArrayScanState);
 }
 
 void ObjArrayScanState::Allocator::Config::deallocate(void* node) {
-  FREE_C_HEAP_OBJ(node);
+  // Do nothing, since we're arena allocating.
+  // Arenas can undo the last allocation, but since we're using a free-list
+  // allocator in front of the arena, that's not useful.
 }
 
 class ObjArrayScanState::Allocator::Impl : public CHeapObj<mtGC> {
+  Mutex _mutex;                 // FIXME should come from outside
   Config _config;
   FreeListAllocator _free_list;
 
 public:
   Impl(const char* name);
+  ~Impl();
 
   NONCOPYABLE(Impl);
 
@@ -158,9 +170,17 @@ public:
 };
 
 ObjArrayScanState::Allocator::Impl::Impl(const char* name)
-  : _config(),
+  : _mutex(Mutex::nosafepoint, name),
+    _config(&_mutex),
     _free_list(name, &_config)
 {}
+
+ObjArrayScanState::Allocator::Impl::~Impl() {
+  // We don't need to clean up the free list.  Deallocating the entries
+  // does nothing, since we're using arena allocation.  Instead, leave it
+  // to the arena destructor to release the memory.
+  _free_list.reset();
+}
 
 ObjArrayScanState* ObjArrayScanState::Allocator::Impl::allocate(oop src, oop dst, int index, int size) {
   void* p = _free_list.allocate();

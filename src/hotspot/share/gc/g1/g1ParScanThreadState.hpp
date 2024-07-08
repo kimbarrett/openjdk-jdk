@@ -88,7 +88,7 @@ class G1ParScanThreadState : public CHeapObj<mtGC> {
   bool _old_gen_is_full;
   // Size (in elements) of a partial objArray task chunk.
   int _partial_objarray_chunk_size;
-  ObjArrayScanState::Allocator _partial_array_scan_state_allocator;
+  ObjArrayScanState::Allocator* _partial_array_scan_state_allocator;
   PartialArrayTaskStepper _partial_array_stepper;
   StringDedup::Requests _string_dedup_requests;
 
@@ -130,7 +130,8 @@ public:
                        uint worker_id,
                        uint num_workers,
                        G1CollectionSet* collection_set,
-                       G1EvacFailureRegions* evac_failure_regions);
+                       G1EvacFailureRegions* evac_failure_regions,
+                       ObjArrayScanState::Allocator* pass_allocator);
   virtual ~G1ParScanThreadState();
 
   void set_ref_discoverer(ReferenceDiscoverer* rd) { _scanner.set_ref_discoverer(rd); }
@@ -253,6 +254,7 @@ class G1ParScanThreadStateSet : public StackObj {
   uint _num_workers;
   bool _flushed;
   G1EvacFailureRegions* _evac_failure_regions;
+  ObjArrayScanState::Allocator* _pass_allocator;
 
  public:
   G1ParScanThreadStateSet(G1CollectedHeap* g1h,

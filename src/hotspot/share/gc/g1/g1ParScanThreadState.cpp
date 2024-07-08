@@ -61,7 +61,8 @@ G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h,
                                            uint worker_id,
                                            uint num_workers,
                                            G1CollectionSet* collection_set,
-                                           G1EvacFailureRegions* evac_failure_regions)
+                                           G1EvacFailureRegions* evac_failure_regions,
+                                           ObjArrayScanState::Allocator* pass_allocator)
   : _g1h(g1h),
     _task_queue(g1h->task_queue(worker_id)),
     _rdc_local_qset(rdcqs),
@@ -80,7 +81,7 @@ G1ParScanThreadState::G1ParScanThreadState(G1CollectedHeap* g1h,
     _surviving_young_words(nullptr),
     _surviving_words_length(collection_set->young_region_length() + 1),
     _old_gen_is_full(false),
-    _partial_array_scan_state_allocator(),
+    _partial_array_scan_state_allocator(pass_allocator),
     _partial_array_stepper(num_workers, ParGCArrayScanChunk),
     _string_dedup_requests(),
     _max_num_optional_regions(collection_set->optional_region_length()),
@@ -253,7 +254,7 @@ void G1ParScanThreadState::do_partial_array(ObjArrayScanState* state) {
   // Release reference to the state, now that we're done with it.
   // If that's the last reference, then release the state.
   if (state->release_reference()) {
-    _partial_array_scan_state_allocator.release(state);
+    _partial_array_scan_state_allocator->release(state);
   }
 }
 
@@ -274,14 +275,19 @@ void G1ParScanThreadState::start_partial_objarray(G1HeapRegionAttr dest_attr,
   // Push any needed partial scan tasks.  Pushed before processing the
   // initial chunk to allow other workers to steal while we're processing.
   if (step._ncreate > 0) {
+    assert(step._index < array_length, "invariant");
+    assert(((array_length - step._index) % _partial_array_stepper.chunk_size()) == 0,
+           "invariant");
     ObjArrayScanState* state =
-      _partial_array_scan_state_allocator.allocate(from_obj, to_obj,
-                                                   step._index,
-                                                   array_length);
+      _partial_array_scan_state_allocator->allocate(from_obj, to_obj,
+                                                    step._index,
+                                                    array_length);
     state->add_references(step._ncreate);
     for (uint i = 0; i < step._ncreate; ++i) {
       push_on_queue(ScannerTask(state));
     }
+  } else {
+    assert(step._index == array_length, "invariant");
   }
 
   // Skip the card enqueue iff the object (to_array) is in survivor region.
@@ -589,7 +595,8 @@ G1ParScanThreadState* G1ParScanThreadStateSet::state_for_worker(uint worker_id) 
                                worker_id,
                                _num_workers,
                                _collection_set,
-                               _evac_failure_regions);
+                               _evac_failure_regions,
+                               _pass_allocator);
   }
   return _states[worker_id];
 }
@@ -722,7 +729,9 @@ G1ParScanThreadStateSet::G1ParScanThreadStateSet(G1CollectedHeap* g1h,
     _surviving_young_words_total(NEW_C_HEAP_ARRAY(size_t, collection_set->young_region_length() + 1, mtGC)),
     _num_workers(num_workers),
     _flushed(false),
-    _evac_failure_regions(evac_failure_regions) {
+    _evac_failure_regions(evac_failure_regions),
+    _pass_allocator(new ObjArrayScanState::Allocator())
+{
   _preserved_marks_set.init(num_workers);
   for (uint i = 0; i < num_workers; ++i) {
     _states[i] = nullptr;
@@ -733,6 +742,7 @@ G1ParScanThreadStateSet::G1ParScanThreadStateSet(G1CollectedHeap* g1h,
 
 G1ParScanThreadStateSet::~G1ParScanThreadStateSet() {
   assert(_flushed, "thread local state from the per thread states should have been flushed");
+  delete _pass_allocator;
   FREE_C_HEAP_ARRAY(G1ParScanThreadState*, _states);
   FREE_C_HEAP_ARRAY(size_t, _surviving_young_words_total);
   FREE_C_HEAP_ARRAY(BufferNodeList, _rdc_buffers);
