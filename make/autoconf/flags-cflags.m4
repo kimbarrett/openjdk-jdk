@@ -782,7 +782,8 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_CPU_DEP],
     FLAGS_SETUP_GCC6_COMPILER_FLAGS($1, $3)
     $1_TOOLCHAIN_CFLAGS="${$1_GCC6_CFLAGS}"
 
-    $1_WARNING_CFLAGS_JVM="-Wno-format-zero-length -Wtype-limits -Wuninitialized"
+    $1_WARNING_CFLAGS_JVM="-Wno-format-zero-length -Wtype-limits -Wuninitialized \
+        -Wzero-as-null-pointer-constant"
   fi
 
   if test "x$TOOLCHAIN_TYPE" = xmicrosoft; then
