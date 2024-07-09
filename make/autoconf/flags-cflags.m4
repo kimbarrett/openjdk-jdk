@@ -757,7 +757,15 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_CPU_DEP],
     FLAGS_SETUP_GCC6_COMPILER_FLAGS($1, $3)
     $1_TOOLCHAIN_CFLAGS="${$1_GCC6_CFLAGS}"
 
-    $1_WARNING_CFLAGS_JVM="-Wno-format-zero-length -Wtype-limits -Wuninitialized"
+    # arm platform needs major work before enabling this warning.
+    if test "x$FLAGS_CPU_ARCH" != xarm; then
+        ZERO_AS_NULL_POINTER_CONSTANT="-Wzero-as-null-pointer-constant"
+    else
+        ZERO_AS_NULL_POINTER_CONSTANT=
+    fi
+
+    $1_WARNING_CFLAGS_JVM="-Wno-format-zero-length -Wtype-limits -Wuninitialized \
+        $ZERO_AS_NULL_POINTER_CONSTANT"
   fi
 
   if test "x$TOOLCHAIN_TYPE" = xmicrosoft; then
