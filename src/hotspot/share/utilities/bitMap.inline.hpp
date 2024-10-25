@@ -31,6 +31,7 @@
 #include "utilities/align.hpp"
 #include "utilities/count_trailing_zeros.hpp"
 #include "utilities/powerOfTwo.hpp"
+#include <utility>
 
 inline void BitMap::set_bit(idx_t bit) {
   verify_index(bit);
@@ -315,6 +316,7 @@ BitMap::find_last_set_bit_aligned_left(idx_t beg, idx_t end) const {
 // is returned by the invoker.  Iteration stops early if conversion of that
 // result to bool is false.
 
+#if 0
 template<typename ReturnType>
 struct BitMap::IterateInvoker {
   template<typename Function>
@@ -331,15 +333,40 @@ struct BitMap::IterateInvoker<void> {
     return true;                // Never stop early.
   }
 };
+#endif
+
+template<typename ReturnType>
+struct BoolInvokeImpl {
+  template<typename Function, typename... Args>
+  bool operator()(Function function, Args&&... args) const {
+    return function(std::forward<Args>(args)...);
+  }
+};
+
+template<>
+struct BoolInvokeImpl<void> {
+  template<typename Function, typename... Args>
+  bool operator()(Function function, Args&&... args) const {
+    function(std::forward<Args>(args)...);
+    return true;
+  }
+};
+
+template<typename Function, typename... Args>
+inline bool bool_invoke(Function function, Args&&... args) {
+  using ReturnType = decltype(function(std::forward<Args>(args)...));
+  auto invoke = BoolInvokeImpl<ReturnType>();
+  return invoke(function, std::forward<Args>(args)...);
+}
 
 template <typename Function>
 inline bool BitMap::iterate(Function function, idx_t beg, idx_t end) const {
-  auto invoke = IterateInvoker<decltype(function(beg))>();
+  // auto invoke = IterateInvoker<decltype(function(beg))>();
   for (idx_t index = beg; true; ++index) {
     index = find_first_set_bit(index, end);
     if (index >= end) {
       return true;
-    } else if (!invoke(function, index)) {
+    } else if (!bool_invoke(function, index) /* !invoke(function, index) */) {
       return false;
     }
   }
@@ -353,12 +380,12 @@ inline bool BitMap::iterate(BitMapClosureType* cl, idx_t beg, idx_t end) const {
 
 template <typename Function>
 inline bool BitMap::reverse_iterate(Function function, idx_t beg, idx_t end) const {
-  auto invoke = IterateInvoker<decltype(function(beg))>();
+  // auto invoke = IterateInvoker<decltype(function(beg))>();
   for (idx_t index; true; end = index) {
     index = find_last_set_bit(beg, end);
     if (index >= end) {
       return true;
-    } else if (!invoke(function, index)) {
+    } else if (!bool_invoke(function, index) /* !invoke(function, index) */) {
       return false;
     }
   }
