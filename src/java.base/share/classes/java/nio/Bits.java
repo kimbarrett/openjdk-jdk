@@ -25,6 +25,8 @@
 
 package java.nio;
 
+import java.lang.ref.Cleaner;
+import java.nio.BufferCleaner;
 import jdk.internal.access.JavaLangRefAccess;
 import jdk.internal.access.SharedSecrets;
 import jdk.internal.misc.Unsafe;
@@ -103,6 +105,7 @@ class Bits {                            // package-private
     // increasing delay before throwing OutOfMemoryError:
     // 1, 2, 4, 8, 16, 32, 64, 128, 256 (total 511 ms ~ 0.5 s)
     // which means that OOME will be thrown after 0.5 s of trying
+    private static final long INITIAL_SLEEP = 1;
     private static final int MAX_SLEEPS = 9;
 
     // These methods should be called whenever direct memory is allocated or
@@ -126,6 +129,15 @@ class Bits {                            // package-private
         }
     }
 
+    private static boolean waitForCleaning(boolean[] interruptedRef) {
+        try {
+            return BufferCleaner.cleaner().waitForCleaning();
+        } catch (InterruptedException e) {
+            interruptedRef[0] = true; // Defer interrupts
+            return true;
+        }
+    }
+
     static void reserveMemorySlow(long size, long cap) {
         // Slow path under the lock. This code would try to trigger cleanups and
         // sense if cleaning was performed. Since the failure mode is OOME,
@@ -133,11 +145,6 @@ class Bits {                            // package-private
         //
         // If this code is modified, make sure a stress test like DirectBufferAllocTest
         // performs well.
-
-        // Semi-optimistic attempt after acquiring the slow-path lock.
-        if (tryReserveMemory(size, cap)) {
-           return;
-        }
 
         // No free memory. We need to trigger cleanups and wait for them to make progress.
         // This requires triggering the GC and waiting for eventual buffer cleanups
@@ -172,31 +179,29 @@ class Bits {                            // package-private
         // to try again, this time reliably getting the results of the first cleanup run. Not
         // handling this case specially simplifies implementation.
 
-        boolean interrupted = false;
+        boolean interruptedRef[] = new boolean[1];
+        int gcCount = 0;
+        int sleepCount = 0;
         try {
-            BufferCleaner.Canary canary = null;
-
-            long sleepTime = 1;
-            for (int sleeps = 0; sleeps < MAX_SLEEPS; sleeps++) {
-                if (canary == null || canary.isDead()) {
-                    // If canary is not yet initialized, we have not triggered a cleanup.
-                    // If canary is dead, there was progress, and it was not enough.
-                    // Trigger GC -> Reference processing -> Cleaner again.
-                    canary = BufferCleaner.newCanary();
-                    System.gc();
-                }
-
-                // Exponentially back off waiting for Cleaner to catch up.
-                try {
-                    Thread.sleep(sleepTime);
-                    sleepTime *= 2;
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                }
-
-                // See if we can satisfy the allocation now.
+            while (true) {
                 if (tryReserveMemory(size, cap)) {
                     return;
+                } else if (waitForCleaning(interruptedRef)) {
+                    // Loop to try again after cleaning progress.
+                } else if (tryReserveMemory(size, cap)) { // Again after cleaning.
+                    return;
+                } else if (sleepCount >= MAX_SLEEPS) {
+                    break;
+                } else if (sleepCount == gcCount) {
+                    System.gc();
+                    ++gcCount;
+                } else {
+                    try {
+                        Thread.sleep(INITIAL_SLEEP << sleepCount);
+                    } catch (InterruptedException e) {
+                        interruptedRef[0] = true; // Defer interrupts
+                    }
+                    ++sleepCount;
                 }
             }
 
@@ -207,8 +212,8 @@ class Bits {                            // package-private
                  + RESERVED_MEMORY.get() + ", limit: " + MAX_MEMORY +")");
 
         } finally {
-            if (interrupted) {
-                // don't swallow interrupts
+            // Don't swallow interrupts.
+            if (interruptedRef[0]) {
                 Thread.currentThread().interrupt();
             }
         }

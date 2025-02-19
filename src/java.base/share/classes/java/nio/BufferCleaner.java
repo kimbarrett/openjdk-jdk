@@ -38,6 +38,12 @@ class BufferCleaner {
         // No instantiation.
     }
 
+    // FIXME: for prototyping waitForCleaning.
+    // Move the cleaner to java.nio.Bits if going that way.
+    static Cleaner cleaner() {
+        return CLEANER;
+    }
+
     /**
      * Register a new cleanable for object and associated action.
      *
