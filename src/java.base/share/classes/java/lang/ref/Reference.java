@@ -261,7 +261,14 @@ public abstract sealed class Reference<T>
     // processing thread) if either (1) the VM has any pending
     // references, or (2) the reference processing thread is
     // processing references. Otherwise, returns false immediately.
-    private static boolean waitForReferenceProcessing()
+    /**
+     * FIXME: public for prototyping
+     *
+     * @return dummy.
+     *
+     * @throws InterruptedException dummy.
+     */
+    public /* private */ static boolean waitForReferenceProcessing()
         throws InterruptedException
     {
         synchronized (processPendingLock) {

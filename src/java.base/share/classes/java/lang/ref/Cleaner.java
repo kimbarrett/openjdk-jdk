@@ -226,6 +226,19 @@ public final class Cleaner {
     }
 
     /**
+     * FIXME: public for prototyping
+     *
+     * @return dummy.
+     *
+     * @throws InterruptedException dummy.
+     */
+    public boolean waitForCleaning()
+        throws InterruptedException
+    {
+        return impl.waitForCleaning();
+    }
+
+    /**
      * {@code Cleanable} represents an object and a
      * cleaning action registered in a {@code Cleaner}.
      * @since 9

@@ -27,6 +27,8 @@ package jdk.internal.ref;
 
 import java.lang.ref.Cleaner;
 import java.lang.ref.Cleaner.Cleanable;
+import java.lang.ref.PhantomReference;
+import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
@@ -54,6 +56,11 @@ public final class CleanerImpl implements Runnable {
 
     // The ReferenceQueue of pending cleaning actions
     final ReferenceQueue<Object> queue;
+
+    // Support for waitForCleaning().
+    private static final Object waitForCleaningLock = new Object();
+    private static long cleanedCounter = 0;
+    private static long queueDrainedCounter = 0;
 
     /**
      * Called by Cleaner static initialization to provide the function
@@ -134,17 +141,100 @@ public final class CleanerImpl implements Runnable {
                 // Clear the thread locals
                 mlThread.eraseThreadLocals();
             }
-            try {
-                // Wait for a Ref, with a timeout to avoid getting hung
-                // due to a race with clear/clean
-                Cleanable ref = (Cleanable) queue.remove(60 * 1000L);
-                if (ref != null) {
-                    ref.clean();
+            // Try to get a cleanable from the queue.  Keep trying until success
+            // or there aren't any references in the pending list waiting to be
+            // enqueued.
+            Cleanable ref = (Cleanable) queue.poll();
+            boolean rpDone = false;
+            while (ref == null && !rpDone) {
+                try {
+                    rpDone = !Reference.waitForReferenceProcessing();
+                } catch (InterruptedException e) {
+                    // Ignore interruption of this cleanup thread.
                 }
-            } catch (Throwable e) {
-                // ignore exceptions from the cleanup action
-                // (including interruption of cleanup thread)
+                ref = (Cleanable) queue.poll();
             }
+            if (ref == null) {
+                // Queue was empty and there were't any pending enqueues.
+                notifyCleaningWaiters(false);
+                try {
+                    // Wait for a Ref, with a timeout to avoid getting hung
+                    // due to a race with clear/clean
+                    ref = (Cleanable) queue.remove(60 * 1000L);
+                } catch (InterruptedException e) {
+                    // Ignore interruption of this cleanup thread.
+                }
+            }
+            if (ref != null) {
+                try {
+                    ref.clean();
+                } catch (Throwable e) {
+                    // Ignore exceptions from the cleanup action.
+                }
+            }
+        }
+    }
+
+    public boolean waitForCleaning()
+        throws InterruptedException
+    {
+        long cleaned;
+        synchronized (waitForCleaningLock) {
+            cleaned = cleanedCounter;
+        }
+
+        // The cleanup thread might be blocked in ReferenceQueue.remove().
+        // Force it to wake up, so that if it has nothing to do it will
+        // notify that the queue has been drained.
+        WakeupCleanable wakeup = new WakeupCleanable(queue);
+        wakeup.enqueue();
+
+        synchronized (waitForCleaningLock) {
+            while (true) {
+                if (cleanedCounter != cleaned) {
+                    return true;
+                } else if (wakeup.cleaned &&
+                           queueDrainedCounter != wakeup.drainedCount) {
+                    // Queue drained after processing wakeup, without any cleaning.
+                    return false;
+                }
+                waitForCleaningLock.wait();
+            }
+        }
+    }
+
+    private static final class WakeupCleanable
+        extends PhantomReference<Object>
+        implements Cleanable
+    {
+        boolean cleaned = false;
+        long drainedCount;      // Set by clean().
+
+        public WakeupCleanable(ReferenceQueue<Object> queue) {
+            super(null, queue);
+        }
+
+        public void clean() {
+            synchronized (waitForCleaningLock) {
+                cleaned = true;
+                // Record counter so waiting thread can detect queue drained
+                // after this wakeup was processed.
+                drainedCount = queueDrainedCounter;
+                // Don't need to notify waiters.  Either clean() methods for
+                // "real" cleanables will do so, or the cleanup thread will
+                // do so when it has drained the queue.
+            }
+        }
+    }
+
+    private static void notifyCleaningWaiters(boolean forCleaning) {
+        synchronized (waitForCleaningLock) {
+            if (forCleaning) {
+                ++cleanedCounter;
+            } else {
+                ++queueDrainedCounter;
+            }
+            waitForCleaningLock.notifyAll();
         }
     }
 
@@ -168,6 +258,7 @@ public final class CleanerImpl implements Runnable {
         @Override
         protected void performCleanup() {
             action.run();
+            notifyCleaningWaiters(true);
         }
 
         /**
@@ -220,7 +311,8 @@ public final class CleanerImpl implements Runnable {
 
         @Override
         protected void performCleanup() {
-            // no action
+            // No action.  Don't need to notify cleaning waiters of this
+            // internal "cleanup".
         }
     }
 
