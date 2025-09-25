@@ -167,58 +167,18 @@
 // longer) names for some operations than the corresponding AtomicAccess
 // functions.
 
+template<typename T, typename Enable = void>
+class Atomic;
+
 // Implementation support for Atomic<T>.
 class AtomicImpl {
+  template<typename T, typename Enable> friend class Atomic;
+
   // Helper base classes, providing various parts of the APIs.
   template<typename T> class CommonCore;
   template<typename T> class SupportsFetchThenSet;
   template<typename T> class SupportsArithmetic;
-
-  // Concrete classes. Atomic<T> is an alias for one of these classes, based on T.
-  template<typename T> class AtomicInteger;
-  template<typename T> class AtomicByte;
-  template<typename T> class AtomicPointer;
-  template<typename T> class AtomicTranslated;
-
-  // Selection of Atomic<T> implementation class, based on T.  This function
-  // is only used as the unevaluated operand for a decltype type specifier.
-#if defined(__clang_major__) && (__clang_major__ < 19)
-  // Make selector() public to work around a bug in clang versions < 19.
-  //   error: 'selector' is a private member of 'AtomicImpl'
-  // But the only reference is on the RHS of the Selected type alias a couple
-  // lines below, in this same class!
-public:
-#endif
-  template<typename T> static auto selector();
-
-public:
-  template<typename T> using Selected = decltype(selector<T>());
 };
-
-// The Atomic<T> type.
-template<typename T>
-using Atomic = AtomicImpl::Selected<T>;
-
-template<typename T>
-auto AtomicImpl::selector() {
-  static_assert(std::is_same_v<T, std::remove_cv_t<T>>,
-                "Value type must not be cv-qualified");
-  if constexpr (std::is_integral_v<T>) {
-    if constexpr ((sizeof(T) == sizeof(int32_t)) || (sizeof(T) == sizeof(int64_t))) {
-      return AtomicInteger<T>();
-    } else if constexpr (sizeof(T) == 1) {
-      return AtomicByte<T>();
-    } else {
-      static_assert(DependentAlwaysFalse<T>, "Invalid atomic integer type");
-    }
-  } else if constexpr (std::is_pointer_v<T>) {
-    return AtomicPointer<T>();
-  } else if constexpr (PrimitiveConversions::Translate<T>::value) {
-    return AtomicTranslated<T>();
-  } else {
-    static_assert(DependentAlwaysFalse<T>, "Invalid atomic value type");
-  }
-}
 
 // Atomic<T> implementation classes.
 
@@ -387,14 +347,20 @@ public:
   /* */
 
 template<typename T>
-class AtomicImpl::AtomicInteger : private SupportsArithmetic<T> {
-  using Base = SupportsArithmetic<T>;
+class Atomic<
+  T,
+  std::enable_if_t<std::is_integral_v<T> &&
+                   ((sizeof(T) == sizeof(int32_t)) ||
+                    (sizeof(T) == sizeof(int64_t)))>>
+  : private AtomicImpl::SupportsArithmetic<T>
+{
+  using Base = AtomicImpl::SupportsArithmetic<T>;
   using Base::value_ptr;
 
 public:
-  explicit AtomicInteger(T value = 0) : Base(value) {}
+  explicit Atomic(T value = 0) : Base(value) {}
 
-  NONCOPYABLE(AtomicInteger);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
 
@@ -403,7 +369,7 @@ public:
   USING_ATOMIC_ARITHMETIC_FROM_BASE();
 
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicInteger>();
+    return AtomicImpl::CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 
   T fetch_then_and(T bits, atomic_memory_order order = memory_order_conservative) {
@@ -432,32 +398,40 @@ public:
 };
 
 template<typename T>
-class AtomicImpl::AtomicByte : private CommonCore<T> {
-  using Base = CommonCore<T>;
+class Atomic<
+  T,
+  std::enable_if_t<std::is_integral_v<T> && (sizeof(T) == 1)>>
+  : private AtomicImpl::CommonCore<T>
+{
+  using Base = AtomicImpl::CommonCore<T>;
 
 public:
-  explicit AtomicByte(T value = 0) : Base(value) {}
+  explicit Atomic(T value = 0) : Base(value) {}
 
-  NONCOPYABLE(AtomicByte);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
 
   USING_ATOMIC_COMMON_CORE_FROM_BASE();
 
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicByte>();
+    return AtomicImpl::CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 };
 
 template<typename T>
-class AtomicImpl::AtomicPointer : private SupportsArithmetic<T> {
-  using Base = SupportsArithmetic<T>;
+class Atomic<
+  T,
+  std::enable_if_t<std::is_pointer_v<T>>>
+  : private AtomicImpl::SupportsArithmetic<T>
+{
+  using Base = AtomicImpl::SupportsArithmetic<T>;
   using Base::value_ptr;
 
 public:
-  explicit AtomicPointer(T value = nullptr) : Base(value) {}
+  explicit Atomic(T value = nullptr) : Base(value) {}
 
-  NONCOPYABLE(AtomicPointer);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
   using ElementType = std::remove_pointer_t<T>;
@@ -467,7 +441,7 @@ public:
   USING_ATOMIC_ARITHMETIC_FROM_BASE();
 
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicPointer>();
+    return AtomicImpl::CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 
   bool replace_if_null(T new_value,
@@ -482,7 +456,10 @@ public:
 };
 
 template<typename T>
-class AtomicImpl::AtomicTranslated {
+class Atomic<
+  T,
+  std::enable_if_t<PrimitiveConversions::Translate<T>::value>>
+{
   using Translator = PrimitiveConversions::Translate<T>;
   using Decayed = typename Translator::Decayed;
 
@@ -496,19 +473,19 @@ public:
 
   // If T is default constructible, construct from a a default constructed T.
   template<typename Dep = T, ENABLE_IF(std::is_default_constructible_v<Dep>)>
-  AtomicTranslated() : AtomicTranslated(T()) {}
+  Atomic() : Atomic(T()) {}
 
   // If T is not default constructible, default construct the underlying
   // Atomic<Decayed>.
   template<typename Dep = T, ENABLE_IF(!std::is_default_constructible_v<Dep>)>
-  AtomicTranslated() : _value() {}
+  Atomic() : _value() {}
 
-  explicit AtomicTranslated(T value) : _value(decay(value)) {}
+  explicit Atomic(T value) : _value(decay(value)) {}
 
-  NONCOPYABLE(AtomicTranslated);
+  NONCOPYABLE(Atomic);
 
   static constexpr int value_offset_in_bytes() {
-    return (offsetof(AtomicTranslated, _value) +
+    return (offsetof(Atomic, _value) +
             Atomic<Decayed>::value_offset_in_bytes());
   }
 
