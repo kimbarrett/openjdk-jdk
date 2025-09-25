@@ -169,52 +169,55 @@
 
 // Implementation support for Atomic<T>.
 class AtomicImpl {
+  enum class Category {
+    Integer,
+    Byte,
+    Pointer,
+    Translated
+  };
+
+#if defined(__GNUC__) && !defined(__clang__)
+  // Workaround for gcc bug. Make category() public, else we get this error
+  //   error: 'static constexpr AtomicImpl::Category AtomicImpl::category()
+  //     [with T = unsigned int]' is private within this context
+  // The only reference is the default template parameter value in the Atomic
+  // class a couple lines below, in this same class!
+public:
+#endif
+  template<typename T>
+  static constexpr Category category();
+private:
+
   // Helper base classes, providing various parts of the APIs.
   template<typename T> class CommonCore;
   template<typename T> class SupportsFetchThenSet;
   template<typename T> class SupportsArithmetic;
 
-  // Concrete classes. Atomic<T> is an alias for one of these classes, based on T.
-  template<typename T> class AtomicInteger;
-  template<typename T> class AtomicByte;
-  template<typename T> class AtomicPointer;
-  template<typename T> class AtomicTranslated;
-
-  // Selection of Atomic<T> implementation class, based on T.  This function
-  // is only used as the unevaluated operand for a decltype type specifier.
-#if defined(__clang_major__) && (__clang_major__ < 19)
-  // Make selector() public to work around a bug in clang versions < 19.
-  //   error: 'selector' is a private member of 'AtomicImpl'
-  // But the only reference is on the RHS of the Selected type alias a couple
-  // lines below, in this same class!
 public:
-#endif
-  template<typename T> static auto selector();
-
-public:
-  template<typename T> using Selected = decltype(selector<T>());
+  template<typename T, Category = category<T>()>
+  class Atomic;
 };
 
 // The Atomic<T> type.
 template<typename T>
-using Atomic = AtomicImpl::Selected<T>;
+using Atomic = AtomicImpl::Atomic<T>;
 
 template<typename T>
-auto AtomicImpl::selector() {
+constexpr auto AtomicImpl::category() -> Category {
   static_assert(std::is_same_v<T, std::remove_cv_t<T>>,
                 "Value type must not be cv-qualified");
   if constexpr (std::is_integral_v<T>) {
     if constexpr ((sizeof(T) == sizeof(int32_t)) || (sizeof(T) == sizeof(int64_t))) {
-      return AtomicInteger<T>();
+      return Category::Integer;
     } else if constexpr (sizeof(T) == 1) {
-      return AtomicByte<T>();
+      return Category::Byte;
     } else {
       static_assert(DependentAlwaysFalse<T>, "Invalid atomic integer type");
     }
   } else if constexpr (std::is_pointer_v<T>) {
-    return AtomicPointer<T>();
+    return Category::Pointer;
   } else if constexpr (PrimitiveConversions::Translate<T>::value) {
-    return AtomicTranslated<T>();
+    return Category::Translated;
   } else {
     static_assert(DependentAlwaysFalse<T>, "Invalid atomic value type");
   }
@@ -230,18 +233,17 @@ protected:
   explicit CommonCore(T value) : _value(value) {}
   ~CommonCore() = default;
 
-public:
-  NONCOPYABLE(CommonCore);
-
-  // Used internally, not part of final derived public API.
   T volatile* value_ptr() { return &_value; }
   T const volatile* value_ptr() const { return &_value; }
 
-  // These are mostly for assembly language access to the value.
+  // Support for value_offset_in_bytes.
   template<typename Derived>
   static constexpr int value_offset_in_bytes_impl() {
     return offsetof(Derived, _value);
   }
+
+public:
+  NONCOPYABLE(CommonCore);
 
   static constexpr int value_size_in_bytes() {
     return sizeof(_value);
@@ -275,16 +277,6 @@ public:
   }
 };
 
-#define USING_ATOMIC_COMMON_CORE_FROM_BASE()    \
-  using Base::value_size_in_bytes;              \
-  using Base::load_relaxed;                     \
-  using Base::load_acquire;                     \
-  using Base::relaxed_store;                    \
-  using Base::release_store;                    \
-  using Base::release_store_fence;              \
-  using Base::cmpxchg;                          \
-  /* */
-
 template<typename T>
 class AtomicImpl::SupportsFetchThenSet : public CommonCore<T> {
   using Base = CommonCore<T>;
@@ -294,18 +286,11 @@ protected:
   ~SupportsFetchThenSet() = default;
 
 public:
-  using Base::value_ptr;
-  USING_ATOMIC_COMMON_CORE_FROM_BASE();
-
   T fetch_then_set(T new_value,
                    atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::xchg(value_ptr(), new_value);
+    return AtomicAccess::xchg(this->value_ptr(), new_value);
   }
 };
-
-#define USING_ATOMIC_FETCH_THEN_SET_FROM_BASE() \
-  using Base::fetch_then_set;                   \
-  /* */
 
 template<typename T>
 class AtomicImpl::SupportsArithmetic : public SupportsFetchThenSet<T> {
@@ -331,15 +316,11 @@ protected:
   ~SupportsArithmetic() = default;
 
 public:
-  using Base::value_ptr;
-  USING_ATOMIC_COMMON_CORE_FROM_BASE();
-  USING_ATOMIC_FETCH_THEN_SET_FROM_BASE();
-
   template<typename I>
   T add_then_fetch(I add_value,
                    atomic_memory_order order = memory_order_conservative) {
     if constexpr (check_i<I>()) {
-      return AtomicAccess::add(value_ptr(), add_value, order);
+      return AtomicAccess::add(this->value_ptr(), add_value, order);
     }
   }
 
@@ -347,7 +328,7 @@ public:
   T fetch_then_add(I add_value,
                    atomic_memory_order order = memory_order_conservative) {
     if constexpr (check_i<I>()) {
-      return AtomicAccess::fetch_then_add(value_ptr(), add_value, order);
+      return AtomicAccess::fetch_then_add(this->value_ptr(), add_value, order);
     }
   }
 
@@ -355,7 +336,7 @@ public:
   T sub_then_fetch(I sub_value,
                    atomic_memory_order order = memory_order_conservative) {
     if constexpr (check_i<I>()) {
-      return AtomicAccess::sub(value_ptr(), sub_value, order);
+      return AtomicAccess::sub(this->value_ptr(), sub_value, order);
     }
   }
 
@@ -369,120 +350,105 @@ public:
   }
 
   void atomic_inc(atomic_memory_order order = memory_order_conservative) {
-    AtomicAccess::inc(value_ptr(), order);
+    AtomicAccess::inc(this->value_ptr(), order);
   }
 
   void atomic_dec(atomic_memory_order order = memory_order_conservative) {
-    AtomicAccess::dec(value_ptr(), order);
+    AtomicAccess::dec(this->value_ptr(), order);
   }
 };
 
-#define USING_ATOMIC_ARITHMETIC_FROM_BASE()     \
-  using Base::add_then_fetch;                   \
-  using Base::fetch_then_add;                   \
-  using Base::sub_then_fetch;                   \
-  using Base::fetch_then_sub;                   \
-  using Base::atomic_inc;                       \
-  using Base::atomic_dec;                       \
-  /* */
-
 template<typename T>
-class AtomicImpl::AtomicInteger : private SupportsArithmetic<T> {
+class AtomicImpl::Atomic<T, AtomicImpl::Category::Integer>
+  : public SupportsArithmetic<T>
+{
   using Base = SupportsArithmetic<T>;
-  using Base::value_ptr;
 
 public:
-  explicit AtomicInteger(T value = 0) : Base(value) {}
+  explicit Atomic(T value = 0) : Base(value) {}
 
-  NONCOPYABLE(AtomicInteger);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
 
-  USING_ATOMIC_COMMON_CORE_FROM_BASE();
-  USING_ATOMIC_FETCH_THEN_SET_FROM_BASE();
-  USING_ATOMIC_ARITHMETIC_FROM_BASE();
-
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicInteger>();
+    return CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 
   T fetch_then_and(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::fetch_then_and(value_ptr(), bits, order);
+    return AtomicAccess::fetch_then_and(this->value_ptr(), bits, order);
   }
 
   T fetch_then_or(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::fetch_then_or(value_ptr(), bits, order);
+    return AtomicAccess::fetch_then_or(this->value_ptr(), bits, order);
   }
 
   T fetch_then_xor(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::fetch_then_xor(value_ptr(), bits, order);
+    return AtomicAccess::fetch_then_xor(this->value_ptr(), bits, order);
   }
 
   T and_then_fetch(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::and_then_fetch(value_ptr(), bits, order);
+    return AtomicAccess::and_then_fetch(this->value_ptr(), bits, order);
   }
 
   T or_then_fetch(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::or_then_fetch(value_ptr(), bits, order);
+    return AtomicAccess::or_then_fetch(this->value_ptr(), bits, order);
   }
 
   T xor_then_fetch(T bits, atomic_memory_order order = memory_order_conservative) {
-    return AtomicAccess::xor_then_fetch(value_ptr(), bits, order);
+    return AtomicAccess::xor_then_fetch(this->value_ptr(), bits, order);
   }
 };
 
 template<typename T>
-class AtomicImpl::AtomicByte : private CommonCore<T> {
+class AtomicImpl::Atomic<T, AtomicImpl::Category::Byte>
+  : public CommonCore<T>
+{
   using Base = CommonCore<T>;
 
 public:
-  explicit AtomicByte(T value = 0) : Base(value) {}
+  explicit Atomic(T value = 0) : Base(value) {}
 
-  NONCOPYABLE(AtomicByte);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
 
-  USING_ATOMIC_COMMON_CORE_FROM_BASE();
-
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicByte>();
+    return CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 };
 
 template<typename T>
-class AtomicImpl::AtomicPointer : private SupportsArithmetic<T> {
+class AtomicImpl::Atomic<T, AtomicImpl::Category::Pointer>
+  : public SupportsArithmetic<T>
+{
   using Base = SupportsArithmetic<T>;
-  using Base::value_ptr;
 
 public:
-  explicit AtomicPointer(T value = nullptr) : Base(value) {}
+  explicit Atomic(T value = nullptr) : Base(value) {}
 
-  NONCOPYABLE(AtomicPointer);
+  NONCOPYABLE(Atomic);
 
   using ValueType = T;
   using ElementType = std::remove_pointer_t<T>;
 
-  USING_ATOMIC_COMMON_CORE_FROM_BASE();
-  USING_ATOMIC_FETCH_THEN_SET_FROM_BASE();
-  USING_ATOMIC_ARITHMETIC_FROM_BASE();
-
   static constexpr int value_offset_in_bytes() {
-    return CommonCore<T>::template value_offset_in_bytes_impl<AtomicPointer>();
+    return CommonCore<T>::template value_offset_in_bytes_impl<Atomic>();
   }
 
   bool replace_if_null(T new_value,
                        atomic_memory_order order = memory_order_conservative) {
-    return nullptr == cmpxchg(nullptr, new_value, order);
+    return nullptr == this->cmpxchg(nullptr, new_value, order);
   }
 
   bool clear_if_equal(T compare_value,
                       atomic_memory_order order = memory_order_conservative) {
-    return compare_value == cmpxchg(compare_value, nullptr, order);
+    return compare_value == this->cmpxchg(compare_value, nullptr, order);
   }
 };
 
 template<typename T>
-class AtomicImpl::AtomicTranslated {
+class AtomicImpl::Atomic<T, AtomicImpl::Category::Translated> {
   using Translator = PrimitiveConversions::Translate<T>;
   using Decayed = typename Translator::Decayed;
 
@@ -496,19 +462,19 @@ public:
 
   // If T is default constructible, construct from a a default constructed T.
   template<typename Dep = T, ENABLE_IF(std::is_default_constructible_v<Dep>)>
-  AtomicTranslated() : AtomicTranslated(T()) {}
+  Atomic() : Atomic(T()) {}
 
   // If T is not default constructible, default construct the underlying
   // Atomic<Decayed>.
   template<typename Dep = T, ENABLE_IF(!std::is_default_constructible_v<Dep>)>
-  AtomicTranslated() : _value() {}
+  Atomic() : _value() {}
 
-  explicit AtomicTranslated(T value) : _value(decay(value)) {}
+  explicit Atomic(T value) : _value(decay(value)) {}
 
-  NONCOPYABLE(AtomicTranslated);
+  NONCOPYABLE(Atomic);
 
   static constexpr int value_offset_in_bytes() {
-    return (offsetof(AtomicTranslated, _value) +
+    return (offsetof(Atomic, _value) +
             Atomic<Decayed>::value_offset_in_bytes());
   }
 
@@ -552,9 +518,5 @@ public:
     return recover(_value.fetch_then_set(decay(new_value), order));
   }
 };
-
-#undef USING_ATOMIC_COMMON_CORE_FROM_BASE
-#undef USING_ATOMIC_FETCH_THEN_SET_FROM_BASE
-#undef USING_ATOMIC_ARITHMETIC_FROM_BASE
 
 #endif // SHARE_RUNTIME_ATOMIC_HPP
